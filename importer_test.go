@@ -34,6 +34,25 @@ func TestMultiImporter_Behavior(t *testing.T) {
 		want       string
 		wantErr    bool
 	}{
+		// ------------------------------------------------------ special cases
+		{
+			name:       "glob_empty",
+			callerFile: "testdata/glob_empty.fake",
+			want:       "",
+			wantErr:    true,
+		},
+		{
+			name:       "glob_no_results",
+			callerFile: "testdata/glob_no_results.fake",
+			want:       "",
+			wantErr:    true,
+		},
+		{
+			name:       "glob_malformed_pattern",
+			callerFile: "testdata/glob_malformed_pattern.fake",
+			want:       "",
+			wantErr:    true,
+		},
 		// -------------------------------------------------------- glob.<?>://
 		{
 			name:       "glob_dot_path",

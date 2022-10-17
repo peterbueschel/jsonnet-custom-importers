@@ -1,7 +1,9 @@
 package importer
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"strings"
 
@@ -27,24 +29,28 @@ type (
 	// file/contents.
 	// Activate the glob-import via the following prefixa in front of the import
 	// path definition (see README file):
-	// - `glob.<?>://`, where <?> can be one of [path, file, dir, stem]
-	// - `glob.<?>+://`, where <?> can be one of [file, dir, stem]
-	// - `glob+://`
+	//   - `glob.<?>://`, where <?> can be one of [path, file, dir, stem]
+	//   - `glob.<?>+://`, where <?> can be one of [file, dir, stem]
+	//   - `glob+://`
 	//
 	// For `glob.<?>://` all resolved files will stored under its
 	// path, file(name), dir(name), stem (filename without extension). If multiple
 	// files would fit for the file, dirs or stem, only the last one will be used.
 	// Example:
-	// - Folders/files:
-	//   - a.libsonnet
-	//   - subfolder/a.libsonnet
-	// - Import path:
-	//   - import 'glob.stem://**/*.libsonnet'
-	// - Result:
-	//   {
-	//     a: (import 'subfolder/a.libsonnet');
-	//   }
+	//  - Folders/files:
+	//    - a.libsonnet
+	//    - subfolder/a.libsonnet
+	//  - Import path:
+	//    - import 'glob.stem://**/*.libsonnet'
+	//  - Result:
+	//      {
+	//        a: (import 'subfolder/a.libsonnet');
+	//      }
+	//
 	GlobImporter struct {
+		// JPaths stores extra search paths.
+		JPaths []string
+
 		logger    *zap.Logger
 		debug     bool
 		separator string
@@ -98,7 +104,7 @@ func (o *orderedMap) add(key, value string, extend bool) {
 
 // NewGlobImporter returns a GlobImporter with a no-op logger, an initialized
 // cycleCache and the default prefixa.
-func NewGlobImporter() *GlobImporter {
+func NewGlobImporter(jpaths ...string) *GlobImporter {
 	return &GlobImporter{
 		separator: "://",
 		prefixa: map[string]string{
@@ -126,6 +132,7 @@ func NewGlobImporter() *GlobImporter {
 		cycleCache: make(map[globCacheKey]struct{}),
 		lastFiles:  []string{},
 		debug:      false,
+		JPaths:     jpaths,
 	}
 }
 
@@ -227,18 +234,14 @@ func (g *GlobImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 		zap.String("cwd", cwd),
 	)
 
-	patterns := []string{pattern}
-	resolvedFiles, err := glob.Glob(&glob.Options{
-		Patterns:       patterns,
-		CWD:            cwd,
-		Debug:          g.debug,
-		IgnorePatterns: []string{g.excludePattern},
-		IgnoreFiles:    g.lastFiles,
-		AbsolutePaths:  false,
-	})
-
+	searchPaths := append(g.JPaths, cwd)
+	resolvedFiles, err := g.resolveFilesFrom(searchPaths, pattern)
 	if err != nil {
 		return contents, foundAt, fmt.Errorf("%w, used pattern: '%s'", err, pattern)
+	}
+	if len(resolvedFiles) == 0 {
+		return contents, foundAt,
+			fmt.Errorf("received %w for the glob pattern '%s'", ErrEmptyResult, pattern)
 	}
 
 	logger.Debug("glob library returns", zap.Strings("files", resolvedFiles))
@@ -257,6 +260,48 @@ func (g *GlobImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 	logger.Debug("returns", zap.String("contents", joinedImports), zap.String("foundAt", foundAt))
 
 	return contents, foundAt, nil
+}
+
+// resolveFilesFrom takes a list of paths together with a glob pattern
+// and returns the output of the used go-glob.Glob function.
+// Each file in every searchpath will be returned and not just the first
+// one, which will be found in one of the search paths.
+func (g *GlobImporter) resolveFilesFrom(searchPaths []string, pattern string) ([]string, error) {
+	var lstatErrors error
+	patterns := []string{pattern}
+	resolvedFiles := []string{}
+	notExitsErrorCounter := 0
+
+	for _, p := range searchPaths {
+		f, err := glob.Glob(&glob.Options{
+			Patterns:       patterns,
+			CWD:            p,
+			Debug:          g.debug,
+			IgnorePatterns: []string{g.excludePattern},
+			IgnoreFiles:    g.lastFiles,
+			AbsolutePaths:  false,
+		})
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				notExitsErrorCounter++
+				// store the error until all searchPaths are checked
+				lstatErrors = fmt.Errorf("%w for given path '%s'", err, p)
+				continue
+			}
+			return []string{}, err
+		}
+
+		resolvedFiles = append(resolvedFiles, f...)
+	}
+
+	// if all searchPaths couldn't be found, return the lstatErrors. Otherwise
+	// it is possible that one searchPath was found, but still the glob pattern
+	// didn't match any file.
+	if len(searchPaths) == notExitsErrorCounter && lstatErrors != nil {
+		return []string{}, lstatErrors
+	}
+	return resolvedFiles, nil
+
 }
 
 func (g *GlobImporter) parse(importedPath string) (string, string, error) {
@@ -295,8 +340,9 @@ func allowedFiles(files []string, cwd, ignoreFile string) []string {
 // the prefix the import string.
 func (g GlobImporter) handle(files []string, prefix string) (string, error) {
 	resolvedFiles := newOrderedMap()
-	importKind := "import"
 
+	// handle import or importstr
+	importKind := "import"
 	if strings.HasPrefix(prefix, "-str") {
 		prefix = strings.TrimPrefix(prefix, "-str")
 		importKind += "str"

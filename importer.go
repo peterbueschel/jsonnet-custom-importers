@@ -1,3 +1,9 @@
+// Package importer implements custom importers for go-jsonnet.
+//
+// Custom importers extend the original importers with extra functionality, like
+// the support for glob pattern, so that a user can import multiple files at
+// once.
+//
 package importer
 
 import (
@@ -14,6 +20,7 @@ var (
 	ErrMalformedAlias       = errors.New("malformed alias")
 	ErrMalformedGlobPattern = errors.New("malformed glob pattern")
 	ErrImportCycle          = errors.New("import cycle")
+	ErrEmptyResult          = errors.New("empty result")
 )
 
 type (
@@ -134,7 +141,7 @@ func (m *MultiImporter) Import(importedFrom, importedPath string) (jsonnet.Conte
 			if err != nil {
 				return jsonnet.MakeContents(""),
 					"",
-					fmt.Errorf("%w for importer: %T", err, importer)
+					fmt.Errorf("custom importer '%T' returns error: %w", importer, err)
 			}
 
 			return contents, foundAt, nil
