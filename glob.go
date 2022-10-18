@@ -189,6 +189,7 @@ func (g *GlobImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 	logger.Debug("Import()",
 		zap.String("importedFrom", importedFrom),
 		zap.String("importedPath", importedPath),
+		zap.Strings("jpaths", g.JPaths),
 	)
 
 	contents := jsonnet.MakeContents("")
@@ -234,14 +235,24 @@ func (g *GlobImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 		zap.String("cwd", cwd),
 	)
 
-	searchPaths := append(g.JPaths, cwd)
-	resolvedFiles, err := g.resolveFilesFrom(searchPaths, pattern)
+	var errs error
+	resolvedFiles, err := g.resolveFilesFrom([]string{cwd}, pattern, false)
 	if err != nil {
-		return contents, foundAt, fmt.Errorf("%w, used pattern: '%s'", err, pattern)
+		errs = fmt.Errorf("in current work dir: %w", err)
 	}
+
+	jpathFiles, err := g.resolveFilesFrom(g.JPaths, pattern, true)
+	if err != nil {
+		errs = fmt.Errorf("with given search paths: %w", err)
+	}
+
+	resolvedFiles = append(resolvedFiles, jpathFiles...)
 	if len(resolvedFiles) == 0 {
-		return contents, foundAt,
-			fmt.Errorf("received %w for the glob pattern '%s'", ErrEmptyResult, pattern)
+		msg := fmt.Errorf("%w for the glob pattern '%s'", ErrEmptyResult, pattern)
+		if errs != nil {
+			msg = fmt.Errorf("for glob pattern '%s', error(s): %w", pattern, errs)
+		}
+		return contents, foundAt, msg
 	}
 
 	logger.Debug("glob library returns", zap.Strings("files", resolvedFiles))
@@ -266,14 +277,17 @@ func (g *GlobImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 // and returns the output of the used go-glob.Glob function.
 // Each file in every searchpath will be returned and not just the first
 // one, which will be found in one of the search paths.
-func (g *GlobImporter) resolveFilesFrom(searchPaths []string, pattern string) ([]string, error) {
+func (g *GlobImporter) resolveFilesFrom(searchPaths []string, pattern string, relativePaths bool) ([]string, error) {
 	var lstatErrors error
 	patterns := []string{pattern}
 	resolvedFiles := []string{}
 	notExitsErrorCounter := 0
+	if relativePaths {
+		searchPaths = allowedFiles(searchPaths, ".", ".")
+	}
 
 	for _, p := range searchPaths {
-		f, err := glob.Glob(&glob.Options{
+		files, err := glob.Glob(&glob.Options{
 			Patterns:       patterns,
 			CWD:            p,
 			Debug:          g.debug,
@@ -290,8 +304,14 @@ func (g *GlobImporter) resolveFilesFrom(searchPaths []string, pattern string) ([
 			}
 			return []string{}, err
 		}
-
-		resolvedFiles = append(resolvedFiles, f...)
+		if relativePaths {
+			f, err := prepareFilePaths(p, files)
+			if err != nil {
+				return []string{}, err
+			}
+			files = f
+		}
+		resolvedFiles = append(resolvedFiles, files...)
 	}
 
 	// if all searchPaths couldn't be found, return the lstatErrors. Otherwise
@@ -302,6 +322,24 @@ func (g *GlobImporter) resolveFilesFrom(searchPaths []string, pattern string) ([
 	}
 	return resolvedFiles, nil
 
+}
+
+// prepareFilePaths updates the filepath of the given files to be relative to
+// the give searchPaths. This is needed to differentiate between absolute paths
+// like: "host.libsonnet" when it was found in multiple search paths like:
+// ["testdata/globPlus", "testdata/globDot"]. The function returns then:
+// ["../../testdata/globPlus/host.libsonnet", "../../testdata/globDot/host.libsonnet"]
+func prepareFilePaths(searchPath string, files []string) ([]string, error) {
+	results := []string{}
+	for _, file := range files {
+		rel, err := filepath.Rel(searchPath, file)
+		if err != nil {
+			return []string{}, err
+		}
+		d := filepath.Dir(rel)
+		results = append(results, filepath.Join(d, searchPath, file))
+	}
+	return results, nil
 }
 
 func (g *GlobImporter) parse(importedPath string) (string, string, error) {

@@ -16,8 +16,9 @@ func TestGlobImporter_resolveFilesFrom(t *testing.T) {
 		excludePattern string
 	}
 	type args struct {
-		searchPaths []string
-		pattern     string
+		searchPaths   []string
+		pattern       string
+		relativePaths bool
 	}
 	tests := []struct {
 		name    string
@@ -85,6 +86,18 @@ func TestGlobImporter_resolveFilesFrom(t *testing.T) {
 			want:    []string{},
 			wantErr: false,
 		},
+		{
+			name: "two jpath set and resolvedFiles are merged",
+			fields: fields{
+				debug: true,
+			},
+			args: args{
+				searchPaths: []string{"testdata/globPlus", "testdata/globDot"},
+				pattern:     "*.libsonnet",
+			},
+			want:    []string{"host.libsonnet", "host.libsonnet"},
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -92,7 +105,7 @@ func TestGlobImporter_resolveFilesFrom(t *testing.T) {
 				debug:          tt.fields.debug,
 				excludePattern: tt.fields.excludePattern,
 			}
-			got, err := g.resolveFilesFrom(tt.args.searchPaths, tt.args.pattern)
+			got, err := g.resolveFilesFrom(tt.args.searchPaths, tt.args.pattern, tt.args.relativePaths)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GlobImporter.resolveFilesFrom() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -184,7 +197,27 @@ func TestGlobImporter_Import(t *testing.T) {
 				importedFrom: "",
 				importedPath: "glob+://*.libsonnet",
 			},
-			want:        jsonnet.MakeContents("(import 'host.libsonnet')"),
+			want:        jsonnet.MakeContents("(import '../../testdata/globPlus/host.libsonnet')"),
+			wantFoundAt: "./",
+		},
+		{
+			name:   "with jpath set and same file found via glob - glob will be taken",
+			jpaths: []string{"testdata/globPlus"},
+			args: args{
+				importedFrom: "",
+				importedPath: "glob+://testdata/globPlus/*.libsonnet",
+			},
+			want:        jsonnet.MakeContents("(import 'testdata/globPlus/host.libsonnet')"),
+			wantFoundAt: "./",
+		},
+		{
+			name:   "with jpath set for cwd and file found via glob - jpath should be ignored",
+			jpaths: []string{"."},
+			args: args{
+				importedFrom: "",
+				importedPath: "glob+://testdata/globPlus/*.libsonnet",
+			},
+			want:        jsonnet.MakeContents("(import 'testdata/globPlus/host.libsonnet')"),
 			wantFoundAt: "./",
 		},
 		{
@@ -208,6 +241,18 @@ func TestGlobImporter_Import(t *testing.T) {
 			want:        jsonnet.MakeContents("(import 'testdata/globPlus/host.libsonnet')"),
 			wantFoundAt: "./",
 			wantErr:     false,
+		},
+		{
+			name:   "two jpath set and contents are merged",
+			jpaths: []string{"testdata/globPlus", "testdata/globDot"},
+			args: args{
+				importedFrom: "",
+				importedPath: "glob+://*.libsonnet",
+			},
+			want: jsonnet.MakeContents(
+				"(import '../../testdata/globPlus/host.libsonnet')+(import '../../testdata/globDot/host.libsonnet')",
+			),
+			wantFoundAt: "./",
 		},
 	}
 	for _, tt := range tests {
