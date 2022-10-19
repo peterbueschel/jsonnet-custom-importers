@@ -178,7 +178,7 @@ func TestMultiImporter_Behavior(t *testing.T) {
 				return
 			}
 			m := NewMultiImporter(g, NewFallbackFileImporter())
-			g.Logger(logger)
+			m.Logger(logger)
 
 			vm := jsonnet.MakeVM()
 			vm.Importer(m)

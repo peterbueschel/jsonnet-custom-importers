@@ -1,14 +1,13 @@
 package importer
 
 import (
-	"errors"
 	"fmt"
-	"io/fs"
 	"path/filepath"
+	"sort"
 	"strings"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/google/go-jsonnet"
-	"github.com/lukasholzer/go-glob"
 	"go.uber.org/zap"
 )
 
@@ -52,7 +51,6 @@ type (
 		JPaths []string
 
 		logger    *zap.Logger
-		debug     bool
 		separator string
 		// used in the CanHandle() and to store a possible alias.
 		prefixa map[string]string
@@ -131,7 +129,6 @@ func NewGlobImporter(jpaths ...string) *GlobImporter {
 		logger:     zap.New(nil),
 		cycleCache: make(map[globCacheKey]struct{}),
 		lastFiles:  []string{},
-		debug:      false,
 		JPaths:     jpaths,
 	}
 }
@@ -157,10 +154,6 @@ func (g *GlobImporter) AddAliasPrefix(alias, prefix string) error {
 func (g *GlobImporter) Logger(logger *zap.Logger) {
 	if logger != nil {
 		g.logger = logger
-		// used to enable also the go-glob debugging output
-		if ce := logger.Check(zap.DebugLevel, "debug logging enabled"); ce != nil {
-			g.debug = true
-		}
 	}
 }
 
@@ -194,7 +187,7 @@ func (g *GlobImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 
 	contents := jsonnet.MakeContents("")
 
-	// Hack!!!:
+	// Hack-ish !!!:
 	// The resolved glob-imports are still found inside the same file (importedFrom)
 	// But the "foundAt" value is not allowed to be the same for multiple importer runs,
 	// causing different contents.
@@ -207,7 +200,11 @@ func (g *GlobImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 	// the VM via running vm.Importer(...) again, couldn't solve this)
 	p := strings.Repeat("./", len(g.cycleCache))
 	foundAt := p + "./" + importedFrom
+
 	cacheKey := globCacheKey{importedFrom, importedPath}
+	if _, exists := g.cycleCache[cacheKey]; !exists {
+		fmt.Printf("g.cycleCache = %+#v\n", g.cycleCache)
+	}
 
 	if _, exists := g.cycleCache[cacheKey]; exists {
 		return contents, "",
@@ -235,33 +232,25 @@ func (g *GlobImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 		zap.String("cwd", cwd),
 	)
 
-	var errs error
-	resolvedFiles, err := g.resolveFilesFrom([]string{cwd}, pattern, false)
+	resolvedFiles, err := g.resolveFilesFrom(append([]string{cwd}, g.JPaths...), pattern)
 	if err != nil {
-		errs = fmt.Errorf("in current work dir: %w", err)
-	}
-
-	jpathFiles, err := g.resolveFilesFrom(g.JPaths, pattern, true)
-	if err != nil {
-		errs = fmt.Errorf("with given search paths: %w", err)
-	}
-
-	resolvedFiles = append(resolvedFiles, jpathFiles...)
-	if len(resolvedFiles) == 0 {
-		msg := fmt.Errorf("%w for the glob pattern '%s'", ErrEmptyResult, pattern)
-		if errs != nil {
-			msg = fmt.Errorf("for glob pattern '%s', error(s): %w", pattern, errs)
-		}
-		return contents, foundAt, msg
+		return contents, foundAt, err
 	}
 
 	logger.Debug("glob library returns", zap.Strings("files", resolvedFiles))
 
 	g.lastFiles = resolvedFiles
 
-	files := allowedFiles(resolvedFiles, cwd, importedFrom)
-	joinedImports, err := g.handle(files, prefix)
+	files := []string{}
+	afiles := allowedFiles(resolvedFiles, importedFrom)
 
+	basepath, _ := filepath.Split(importedFrom)
+	for _, f := range afiles {
+		rf, _ := filepath.Rel(basepath, f)
+		files = append(files, rf)
+	}
+
+	joinedImports, err := g.handle(files, prefix)
 	if err != nil {
 		return contents, foundAt, err
 	}
@@ -277,69 +266,42 @@ func (g *GlobImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 // and returns the output of the used go-glob.Glob function.
 // Each file in every searchpath will be returned and not just the first
 // one, which will be found in one of the search paths.
-func (g *GlobImporter) resolveFilesFrom(searchPaths []string, pattern string, relativePaths bool) ([]string, error) {
-	var lstatErrors error
-	patterns := []string{pattern}
+func (g *GlobImporter) resolveFilesFrom(searchPaths []string, pattern string) ([]string, error) {
 	resolvedFiles := []string{}
-	notExitsErrorCounter := 0
-	if relativePaths {
-		searchPaths = allowedFiles(searchPaths, ".", ".")
-	}
 
 	for _, p := range searchPaths {
-		files, err := glob.Glob(&glob.Options{
-			Patterns:       patterns,
-			CWD:            p,
-			Debug:          g.debug,
-			IgnorePatterns: []string{g.excludePattern},
-			IgnoreFiles:    g.lastFiles,
-			AbsolutePaths:  false,
-		})
+		files, err := doublestar.FilepathGlob(filepath.Join(p, pattern))
 		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				notExitsErrorCounter++
-				// store the error until all searchPaths are checked
-				lstatErrors = fmt.Errorf("%w for given path '%s'", err, p)
-				continue
-			}
 			return []string{}, err
-		}
-		if relativePaths {
-			f, err := prepareFilePaths(p, files)
-			if err != nil {
-				return []string{}, err
-			}
-			files = f
 		}
 		resolvedFiles = append(resolvedFiles, files...)
 	}
 
-	// if all searchPaths couldn't be found, return the lstatErrors. Otherwise
-	// it is possible that one searchPath was found, but still the glob pattern
-	// didn't match any file.
-	if len(searchPaths) == notExitsErrorCounter && lstatErrors != nil {
-		return []string{}, lstatErrors
+	if len(resolvedFiles) == 0 {
+		return []string{},
+			fmt.Errorf("%w for the glob pattern '%s'", ErrEmptyResult, pattern)
+	}
+	sort.Strings(resolvedFiles)
+	// handle excludes
+	if len(g.excludePattern) > 0 {
+		return g.removeExcludesFrom(resolvedFiles)
 	}
 	return resolvedFiles, nil
 
 }
 
-// prepareFilePaths updates the filepath of the given files to be relative to
-// the give searchPaths. This is needed to differentiate between absolute paths
-// like: "host.libsonnet" when it was found in multiple search paths like:
-// ["testdata/globPlus", "testdata/globDot"]. The function returns then:
-// ["../../testdata/globPlus/host.libsonnet", "../../testdata/globDot/host.libsonnet"]
-func prepareFilePaths(searchPath string, files []string) ([]string, error) {
-	results := []string{}
-	for _, file := range files {
-		rel, err := filepath.Rel(searchPath, file)
+func (g *GlobImporter) removeExcludesFrom(files []string) ([]string, error) {
+	keep := []string{}
+	for _, f := range files {
+		match, err := doublestar.PathMatch(g.excludePattern, f)
 		if err != nil {
 			return []string{}, err
 		}
-		d := filepath.Dir(rel)
-		results = append(results, filepath.Join(d, searchPath, file))
+		if !match {
+			keep = append(keep, f)
+		}
 	}
-	return results, nil
+	return keep, nil
 }
 
 func (g *GlobImporter) parse(importedPath string) (string, string, error) {
@@ -359,11 +321,11 @@ func (g *GlobImporter) parse(importedPath string) (string, string, error) {
 // allowedFiles removes ignoreFile from a given list of files and
 // converts the rest via filepath.FromSlash().
 // Used to remove self reference of a file to avoid endless loops.
-func allowedFiles(files []string, cwd, ignoreFile string) []string {
+func allowedFiles(files []string, ignoreFile string) []string {
 	allowedFiles := []string{}
 
 	for _, file := range files {
-		if filepath.Join(cwd, file) == ignoreFile {
+		if file == ignoreFile {
 			continue
 		}
 
