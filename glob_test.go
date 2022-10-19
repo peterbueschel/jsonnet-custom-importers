@@ -12,13 +12,11 @@ import (
 
 func TestGlobImporter_resolveFilesFrom(t *testing.T) {
 	type fields struct {
-		debug          bool
 		excludePattern string
 	}
 	type args struct {
-		searchPaths   []string
-		pattern       string
-		relativePaths bool
+		searchPaths []string
+		pattern     string
 	}
 	tests := []struct {
 		name    string
@@ -28,21 +26,17 @@ func TestGlobImporter_resolveFilesFrom(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "existing folder given and should return files without error",
-			fields: fields{
-				debug: true,
-			},
+			name:   "existing folder given and should return files without error",
+			fields: fields{},
 			args: args{
 				searchPaths: []string{"testdata/globPlus"},
 				pattern:     "*.libsonnet",
 			},
-			want: []string{"host.libsonnet"},
+			want: []string{"testdata/globPlus/host.libsonnet"},
 		},
 		{
-			name: "malformed glob pattern - should return error",
-			fields: fields{
-				debug: true,
-			},
+			name:   "malformed glob pattern - should return error",
+			fields: fields{},
 			args: args{
 				searchPaths: []string{"testdata"},
 				pattern:     "[",
@@ -53,8 +47,7 @@ func TestGlobImporter_resolveFilesFrom(t *testing.T) {
 		{
 			name: "existing folder given with excludePattern and should return files without error",
 			fields: fields{
-				debug:          true,
-				excludePattern: "*host*",
+				excludePattern: "**/*host.libsonnet",
 			},
 			args: args{
 				searchPaths: []string{"testdata/globPlus"},
@@ -63,10 +56,8 @@ func TestGlobImporter_resolveFilesFrom(t *testing.T) {
 			want: []string{},
 		},
 		{
-			name: "only none-existing folder and should return error",
-			fields: fields{
-				debug: true,
-			},
+			name:   "only none-existing folder and should return error",
+			fields: fields{},
 			args: args{
 				searchPaths: []string{"globPlus"},
 				pattern:     "*.jsonnet",
@@ -75,37 +66,32 @@ func TestGlobImporter_resolveFilesFrom(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "one none-existing folder and one existing folder, but glob pattern doesn't match - should not return error",
-			fields: fields{
-				debug: true,
-			},
+			name:   "one none-existing folder and one existing folder, but glob pattern doesn't match - should return empty result error",
+			fields: fields{},
 			args: args{
 				searchPaths: []string{"globPlus", "testdata"},
 				pattern:     "*.xsonnet",
 			},
 			want:    []string{},
-			wantErr: false,
+			wantErr: true,
 		},
 		{
-			name: "two jpath set and resolvedFiles are merged",
-			fields: fields{
-				debug: true,
-			},
+			name:   "two jpath set and resolvedFiles are merged",
+			fields: fields{},
 			args: args{
 				searchPaths: []string{"testdata/globPlus", "testdata/globDot"},
 				pattern:     "*.libsonnet",
 			},
-			want:    []string{"host.libsonnet", "host.libsonnet"},
+			want:    []string{"testdata/globDot/host.libsonnet", "testdata/globPlus/host.libsonnet"},
 			wantErr: false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := &GlobImporter{
-				debug:          tt.fields.debug,
 				excludePattern: tt.fields.excludePattern,
 			}
-			got, err := g.resolveFilesFrom(tt.args.searchPaths, tt.args.pattern, tt.args.relativePaths)
+			got, err := g.resolveFilesFrom(tt.args.searchPaths, tt.args.pattern)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GlobImporter.resolveFilesFrom() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -119,7 +105,6 @@ func TestGlobImporter_AddAliasPrefix(t *testing.T) {
 	type fields struct {
 		JPaths         []string
 		logger         *zap.Logger
-		debug          bool
 		separator      string
 		prefixa        map[string]string
 		aliases        map[string]string
@@ -144,7 +129,6 @@ func TestGlobImporter_AddAliasPrefix(t *testing.T) {
 			g := &GlobImporter{
 				JPaths:         tt.fields.JPaths,
 				logger:         tt.fields.logger,
-				debug:          tt.fields.debug,
 				separator:      tt.fields.separator,
 				prefixa:        tt.fields.prefixa,
 				aliases:        tt.fields.aliases,
@@ -197,11 +181,35 @@ func TestGlobImporter_Import(t *testing.T) {
 				importedFrom: "",
 				importedPath: "glob+://*.libsonnet",
 			},
-			want:        jsonnet.MakeContents("(import '../../testdata/globPlus/host.libsonnet')"),
+			want:        jsonnet.MakeContents("(import 'testdata/globPlus/host.libsonnet')"),
 			wantFoundAt: "./",
 		},
 		{
-			name:   "with jpath set and same file found via glob - glob will be taken",
+			name:   "with jpath set to a models folder inside and outside vendor folder - contents are merged",
+			jpaths: []string{"testdata/globJPaths/vendor", "testdata/globJPaths/"},
+			args: args{
+				importedFrom: "",
+				importedPath: "glob+://models/*.jsonnet",
+			},
+			want: jsonnet.MakeContents(
+				"(import 'testdata/globJPaths/models/x.jsonnet')+(import 'testdata/globJPaths/vendor/models/y.jsonnet')",
+			),
+			wantFoundAt: "./",
+		},
+		//{
+		//	name:   "with jpath set to a models folder inside vendor folder and same folder in cwd - contents are merged",
+		//	jpaths: []string{"testvendor"},
+		//	args: args{
+		//		importedFrom: "",
+		//		importedPath: "glob+://models/*.jsonnet",
+		//	},
+		//	want: jsonnet.MakeContents(
+		//		"(import 'models/x.jsonnet')+(import 'vendor/models/y.jsonnet')",
+		//	),
+		//	wantFoundAt: "./",
+		//},
+		{
+			name:   "with jpath set and same file found via glob - no duplication",
 			jpaths: []string{"testdata/globPlus"},
 			args: args{
 				importedFrom: "",
@@ -211,13 +219,13 @@ func TestGlobImporter_Import(t *testing.T) {
 			wantFoundAt: "./",
 		},
 		{
-			name:   "with jpath set for cwd and file found via glob - jpath should be ignored",
+			name:   "with jpath set for cwd and file found via glob - even that is nonsens",
 			jpaths: []string{"."},
 			args: args{
 				importedFrom: "",
 				importedPath: "glob+://testdata/globPlus/*.libsonnet",
 			},
-			want:        jsonnet.MakeContents("(import 'testdata/globPlus/host.libsonnet')"),
+			want:        jsonnet.MakeContents("(import 'testdata/globPlus/host.libsonnet')+(import 'testdata/globPlus/host.libsonnet')"),
 			wantFoundAt: "./",
 		},
 		{
@@ -250,7 +258,7 @@ func TestGlobImporter_Import(t *testing.T) {
 				importedPath: "glob+://*.libsonnet",
 			},
 			want: jsonnet.MakeContents(
-				"(import '../../testdata/globPlus/host.libsonnet')+(import '../../testdata/globDot/host.libsonnet')",
+				"(import 'testdata/globDot/host.libsonnet')+(import 'testdata/globPlus/host.libsonnet')",
 			),
 			wantFoundAt: "./",
 		},
@@ -275,7 +283,6 @@ func TestGlobImporter_parse(t *testing.T) {
 	type fields struct {
 		JPaths         []string
 		logger         *zap.Logger
-		debug          bool
 		separator      string
 		prefixa        map[string]string
 		aliases        map[string]string
@@ -301,7 +308,6 @@ func TestGlobImporter_parse(t *testing.T) {
 			g := &GlobImporter{
 				JPaths:         tt.fields.JPaths,
 				logger:         tt.fields.logger,
-				debug:          tt.fields.debug,
 				separator:      tt.fields.separator,
 				prefixa:        tt.fields.prefixa,
 				aliases:        tt.fields.aliases,
@@ -328,7 +334,6 @@ func TestGlobImporter_handle(t *testing.T) {
 	type fields struct {
 		JPaths         []string
 		logger         *zap.Logger
-		debug          bool
 		separator      string
 		prefixa        map[string]string
 		aliases        map[string]string
@@ -354,7 +359,6 @@ func TestGlobImporter_handle(t *testing.T) {
 			g := GlobImporter{
 				JPaths:         tt.fields.JPaths,
 				logger:         tt.fields.logger,
-				debug:          tt.fields.debug,
 				separator:      tt.fields.separator,
 				prefixa:        tt.fields.prefixa,
 				aliases:        tt.fields.aliases,

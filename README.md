@@ -72,7 +72,7 @@ where `glob.stem+` is one of the possible `<importer prefixa>`, the `://` is the
 ## GlobImporter
 
 - Is a custom importer, which:
-	- **Imports multiple files at once** with [glob patterns](https://en.wikipedia.org/wiki/Glob_(programming)) handled by the [~~doublestar~~](https://github.com/bmatcuk/doublestar) (**update**) [go-glob](https://github.com/lukasholzer/go-glob) library.
+	- **Imports multiple files at once** with [glob patterns](https://en.wikipedia.org/wiki/Glob_(programming)) handled by the [doublestar](https://github.com/bmatcuk/doublestar) library.
 	- Supports **Continuous** imports: If inside the resolved files other glob-patterns will be found, the *GlobImporter* will also take these *glob-imports* and resolves the underlying files.
 	- Can **Exclude** imports: use the `!<glob pattern>` right after a prefix to exclude files from further handlings.
 - Activate the _glob-import_ via the prefix **`glob.<?>`**  or **`glob.<?>+`** to get the content of the resolved files as object. The content of each file will be available under its resolved **path**, **file**name, **stem** (filename with file extension) or **dir**name. (see also table in section "Prefix `glob.<?>` And `glob.<?>+`")
@@ -254,7 +254,7 @@ The `SetAliasPrefix()` can be used multiple times, whereby only the last setting
 ## Dependencies
 
 - https://github.com/google/go-jsonnet the reason for everything :-)
-- https://github.com/lukasholzer/go-glob has ignore files support
+- https://github.com/bmatcuk/doublestar support for double star (`**`) glob patterns
 - https://github.com/uber-go/zap for structured logging
 
 ## Other Projects
