@@ -2,27 +2,20 @@ package importer
 
 import (
 	"fmt"
+	"net/url"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
+	"github.com/dominikbraun/graph"
 	"github.com/google/go-jsonnet"
+	"github.com/spf13/afero"
 	"go.uber.org/zap"
 )
 
-var (
-	excludeSeparator = "!"
-)
-
 type (
-	// globCacheKey is used for the globCache and helps also to identify
-	// "import cycles".
-	globCacheKey struct {
-		importedFrom string
-		importedPath string
-	}
-
 	// GlobImporter can be used to allow import-paths with glob patterns inside.
 	// Continuous imports are also possible and allow glob pattern in resolved
 	// file/contents.
@@ -49,20 +42,16 @@ type (
 	GlobImporter struct {
 		// JPaths stores extra search paths.
 		JPaths []string
+		// A FileSystem abstraction; useful for tests
+		fs     afero.Fs
+		logger *zap.Logger
 
-		logger    *zap.Logger
-		separator string
+		importGraph   graph.Graph[string, string]
+		importCounter int
+
 		// used in the CanHandle() and to store a possible alias.
 		prefixa map[string]string
 		aliases map[string]string
-		// lastFiles holds the last resolved files to enrich the import cycle
-		// error output and to set them as ignoreFiles in the go-glob options.
-		lastFiles []string
-		// when this cache get hit, a caller import uses the same import path
-		// inside the same filepath. Which means, there is an import cycle.
-		// A cycle ends up in a "max stack frames exceeded" and is tolerated.
-		// ( see also: https://github.com/google/go-jsonnet/issues/353 )
-		cycleCache map[globCacheKey]struct{}
 		// excludePattern is used in the GlobImporter to ignore files matching
 		// the given pattern in '.gitIgnore' .
 		excludePattern string
@@ -74,7 +63,24 @@ type (
 		items map[string][]string
 		keys  []string
 	}
+	// hierachically sort the resolved files.
+	hierachically []string
 )
+
+func (s hierachically) Len() int {
+	return len(s)
+}
+
+func (s hierachically) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+func (s hierachically) Less(i, j int) bool {
+	s1 := strings.ReplaceAll(s[i], "/", "\x00")
+	s2 := strings.ReplaceAll(s[j], "/", "\x00")
+
+	return s1 < s2
+}
 
 // newOrderedMap initialize a new orderedMap.
 func newOrderedMap() *orderedMap {
@@ -100,11 +106,9 @@ func (o *orderedMap) add(key, value string, extend bool) {
 	}
 }
 
-// NewGlobImporter returns a GlobImporter with a no-op logger, an initialized
-// cycleCache and the default prefixa.
+// NewGlobImporter returns a GlobImporter with default prefixa.
 func NewGlobImporter(jpaths ...string) *GlobImporter {
 	return &GlobImporter{
-		separator: "://",
 		prefixa: map[string]string{
 			"glob.path":      "",
 			"glob.path+":     "",
@@ -125,12 +129,19 @@ func NewGlobImporter(jpaths ...string) *GlobImporter {
 			"glob+":          "",
 			"glob-str+":      "",
 		},
-		aliases:    make(map[string]string),
-		logger:     zap.New(nil),
-		cycleCache: make(map[globCacheKey]struct{}),
-		lastFiles:  []string{},
-		JPaths:     jpaths,
+		aliases:        make(map[string]string),
+		logger:         zap.New(nil),
+		JPaths:         jpaths,
+		excludePattern: "",
+		importGraph:    graph.New(graph.StringHash, graph.Tree(), graph.Directed(), graph.PreventCycles()),
+		importCounter:  0,
+		fs:             afero.NewOsFs(),
 	}
+}
+
+func (g *GlobImporter) setImportGraph(importGraph graph.Graph[string, string], importCounter int) {
+	g.importGraph = importGraph
+	g.importCounter = importCounter
 }
 
 func (g *GlobImporter) Exclude(pattern string) {
@@ -144,6 +155,7 @@ func (g *GlobImporter) AddAliasPrefix(alias, prefix string) error {
 	if _, exists := g.prefixa[prefix]; !exists {
 		return fmt.Errorf("%w '%s'", ErrUnknownPrefix, prefix)
 	}
+
 	g.prefixa[prefix] = alias
 	g.aliases[alias] = prefix
 
@@ -198,26 +210,9 @@ func (g *GlobImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 	// So I have to put for example a simple self-reference './' in front of the "importedFrom" path
 	// to fake the foundAt value. (tried multiple things, but even flushing the importerCache of
 	// the VM via running vm.Importer(...) again, couldn't solve this)
-	p := strings.Repeat("./", len(g.cycleCache))
+	p := strings.Repeat("./", g.importCounter)
 	foundAt := p + "./" + importedFrom
 
-	cacheKey := globCacheKey{importedFrom, importedPath}
-	if _, exists := g.cycleCache[cacheKey]; !exists {
-		fmt.Printf("g.cycleCache = %+#v\n", g.cycleCache)
-	}
-
-	if _, exists := g.cycleCache[cacheKey]; exists {
-		return contents, "",
-			fmt.Errorf(
-				"%w for import path '%s' in '%s'. Possible cycle in [%s]",
-				ErrImportCycle,
-				importedPath, importedFrom, strings.Join(g.lastFiles, " <-> "),
-			)
-	}
-	// Add everything to the cache at the end
-	defer func() {
-		g.cycleCache[cacheKey] = struct{}{}
-	}()
 	prefix, pattern, err := g.parse(importedPath)
 	if err != nil {
 		return contents, foundAt, err
@@ -231,23 +226,48 @@ func (g *GlobImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 		zap.String("pattern", pattern),
 		zap.String("cwd", cwd),
 	)
-
-	resolvedFiles, err := g.resolveFilesFrom(append([]string{cwd}, g.JPaths...), pattern)
+	// g.JPaths will be used first, before the cwd - this will give cwd higher
+	// priority at the end.
+	resolvedFiles, err := g.resolveFilesFrom(g.JPaths, cwd, pattern)
 	if err != nil {
 		return contents, foundAt, err
 	}
 
 	logger.Debug("glob library returns", zap.Strings("files", resolvedFiles))
 
-	g.lastFiles = resolvedFiles
-
 	files := []string{}
 	afiles := allowedFiles(resolvedFiles, importedFrom)
-
 	basepath, _ := filepath.Split(importedFrom)
+
+	if err := g.importGraph.AddVertex(importedPath,
+		graph.VertexAttribute("shape", "rect"),
+		graph.VertexAttribute("style", "dashed"),
+		graph.VertexAttribute("color", "grey"),
+		graph.VertexAttribute("fontcolor", "grey"),
+	); err != nil {
+		logger.Warn(err.Error())
+	}
+
 	for _, f := range afiles {
-		rf, _ := filepath.Rel(basepath, f)
-		files = append(files, rf)
+		relf, _ := filepath.Rel(basepath, f)
+		files = append(files, relf)
+
+		if err := g.importGraph.AddVertex(relf,
+			graph.VertexAttribute("shape", "rect"),
+			graph.VertexAttribute("color", "grey"),
+			graph.VertexAttribute("fontcolor", "grey"),
+			graph.VertexAttribute("style", "dashed"),
+		); err != nil {
+			logger.Warn(err.Error())
+		}
+
+		if err := g.importGraph.AddEdge(importedPath, relf,
+			graph.EdgeAttribute("color", "grey"),
+			graph.EdgeAttribute("style", "dashed"),
+			graph.EdgeWeight(g.importCounter),
+		); err != nil {
+			logger.Warn(err.Error())
+		}
 	}
 
 	joinedImports, err := g.handle(files, prefix)
@@ -263,57 +283,109 @@ func (g *GlobImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 }
 
 // resolveFilesFrom takes a list of paths together with a glob pattern
-// and returns the output of the used go-glob.Glob function.
-// Each file in every searchpath will be returned and not just the first
-// one, which will be found in one of the search paths.
-func (g *GlobImporter) resolveFilesFrom(searchPaths []string, pattern string) ([]string, error) {
+// and returns the output of the used doublestar.Glob function.
+func (g *GlobImporter) resolveFilesFrom(searchPaths []string, cwd, pattern string) ([]string, error) {
+	executeGlob := func(dir, pattern string) (matches []string, err error) {
+		pathPattern := filepath.Join(dir, pattern)
+		pathPattern = filepath.Clean(pathPattern)
+		pathPattern = filepath.ToSlash(pathPattern)
+		base, file := doublestar.SplitPattern(pathPattern)
+
+		fs, err := afero.NewIOFS(g.fs).Sub(base)
+		if err != nil {
+			return
+		}
+
+		if matches, err = doublestar.Glob(fs, file); err != nil {
+			return
+		}
+
+		for i := range matches {
+			matches[i] = filepath.FromSlash(path.Join(base, matches[i]))
+		}
+
+		return
+	}
+
 	resolvedFiles := []string{}
 
 	for _, p := range searchPaths {
-		files, err := doublestar.FilepathGlob(filepath.Join(p, pattern))
+		matches, err := executeGlob(p, pattern)
 		if err != nil {
 			return []string{}, err
 		}
-		resolvedFiles = append(resolvedFiles, files...)
+
+		resolvedFiles = append(resolvedFiles, matches...)
 	}
+	// sort the JPaths results first
+	sort.Sort(hierachically(resolvedFiles))
+
+	// CWD must be last in resolvedFiles
+	matches, err := executeGlob(cwd, pattern)
+	if err != nil {
+		return []string{}, err
+	}
+
+	sort.Sort(hierachically(matches))
+	resolvedFiles = append(resolvedFiles, matches...)
 
 	if len(resolvedFiles) == 0 {
 		return []string{},
 			fmt.Errorf("%w for the glob pattern '%s'", ErrEmptyResult, pattern)
 	}
-	sort.Strings(resolvedFiles)
 	// handle excludes
 	if len(g.excludePattern) > 0 {
-		return g.removeExcludesFrom(resolvedFiles)
+		return g.removeExcludesFrom(resolvedFiles, pattern)
 	}
-	return resolvedFiles, nil
 
+	return resolvedFiles, nil
 }
 
-func (g *GlobImporter) removeExcludesFrom(files []string) ([]string, error) {
+func (g *GlobImporter) removeExcludesFrom(files []string, pattern string) ([]string, error) {
 	keep := []string{}
-	for _, f := range files {
-		match, err := doublestar.PathMatch(g.excludePattern, f)
+
+	for _, file := range files {
+		match, err := doublestar.PathMatch(g.excludePattern, file)
 		if err != nil {
-			return []string{}, err
+			return []string{}, fmt.Errorf("while remove excluded file %s ,error: %w", file, err)
 		}
+
 		if !match {
-			keep = append(keep, f)
+			keep = append(keep, file)
 		}
 	}
+
+	if len(keep) == 0 {
+		return []string{},
+			fmt.Errorf(
+				"%w, exclude pattern '%s' removed all matches for the glob pattern '%s'",
+				ErrEmptyResult, g.excludePattern, pattern)
+	}
+
 	return keep, nil
 }
 
 func (g *GlobImporter) parse(importedPath string) (string, string, error) {
-	globPrefix, pattern, found := strings.Cut(importedPath, g.separator)
-	if !found {
+	parsedURL, err := url.Parse(importedPath)
+	if err != nil {
 		return "", "",
-			fmt.Errorf("%w: missing separator '%s' in import path: %s",
-				ErrMalformedGlobPattern, g.separator, importedPath)
+			fmt.Errorf("%w: cannot parse import '%s', error: %s",
+				ErrMalformedGlobPattern, importedPath, err)
 	}
-	// handle excludePattern, if exists
-	prefix, excludePattern, _ := strings.Cut(globPrefix, excludeSeparator)
-	g.excludePattern = excludePattern
+
+	prefix := parsedURL.Scheme
+	pattern := strings.Join([]string{parsedURL.Host, parsedURL.Path}, "/")
+
+	query, err := url.ParseQuery(parsedURL.RawQuery)
+	if err != nil {
+		return "", "",
+			fmt.Errorf("%w: cannot parse the query inside the import '%s', error: %s",
+				ErrMalformedGlobPattern, importedPath, err)
+	}
+
+	if excludePattern, exists := query["exclude"]; exists {
+		g.excludePattern = excludePattern[0]
+	}
 
 	return prefix, pattern, nil
 }
@@ -343,10 +415,12 @@ func (g GlobImporter) handle(files []string, prefix string) (string, error) {
 
 	// handle import or importstr
 	importKind := "import"
+
 	if strings.HasPrefix(prefix, "-str") {
 		prefix = strings.TrimPrefix(prefix, "-str")
 		importKind += "str"
 	}
+
 	// handle alias prefix
 	if p, exists := g.aliases[prefix]; exists {
 		prefix = p
