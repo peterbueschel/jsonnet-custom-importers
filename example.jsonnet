@@ -1,4 +1,4 @@
-local plus_continuous = import 'glob+!**/diamond*.jsonnet://testdata/globPlus/**/*.jsonnet';
+local plus_continuous = import 'glob+://testdata/globPlus/**/*.jsonnet?exclude=**/diamond*.jsonnet';
 local plus = import 'glob+://testdata/globPlus/**/*.libsonnet';
 
 local dot = import 'glob.stem+://testdata/globDot/**/*.libsonnet';

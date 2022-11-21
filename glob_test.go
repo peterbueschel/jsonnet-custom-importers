@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/go-jsonnet"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -13,9 +14,12 @@ import (
 func TestGlobImporter_resolveFilesFrom(t *testing.T) {
 	type fields struct {
 		excludePattern string
+		testFolders    []string
+		testFiles      map[string]string
 	}
 	type args struct {
 		searchPaths []string
+		cwd         string
 		pattern     string
 	}
 	tests := []struct {
@@ -26,13 +30,19 @@ func TestGlobImporter_resolveFilesFrom(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:   "existing folder given and should return files without error",
-			fields: fields{},
-			args: args{
-				searchPaths: []string{"testdata/globPlus"},
-				pattern:     "*.libsonnet",
+			name: "existing folder given and should return files without error",
+			fields: fields{
+				testFolders: []string{"vendor"},
+				testFiles: map[string]string{
+					"vendor/a.jsonnet": "{a: 1}",
+				},
 			},
-			want: []string{"testdata/globPlus/host.libsonnet"},
+			args: args{
+				searchPaths: []string{"vendor"},
+				pattern:     "*.jsonnet",
+			},
+			want:    []string{"vendor/a.jsonnet"},
+			wantErr: false,
 		},
 		{
 			name:   "malformed glob pattern - should return error",
@@ -45,100 +55,112 @@ func TestGlobImporter_resolveFilesFrom(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "existing folder given with excludePattern and should return files without error",
+			name: "existing folder given with excludePattern for everything and should return empty result error",
 			fields: fields{
-				excludePattern: "**/*host.libsonnet",
+				excludePattern: "**/*.libsonnet",
+				testFolders:    []string{"vendor"},
+				testFiles: map[string]string{
+					"vendor/ignoreMe.libsonnet": "{b: 2}",
+					"vendor/meToo.libsonnet":    "{a: 1}",
+				},
 			},
 			args: args{
-				searchPaths: []string{"testdata/globPlus"},
+				searchPaths: []string{"vendor"},
 				pattern:     "*.libsonnet",
 			},
-			want: []string{},
+			want:    []string{},
+			wantErr: true,
 		},
 		{
-			name:   "only none-existing folder and should return error",
-			fields: fields{},
+			name: "none-existing folder - should return empty result error",
+			fields: fields{
+				testFolders: []string{"vendor"},
+				testFiles: map[string]string{
+					"vendor/a.jsonnet": "{a: 1}",
+				},
+			},
 			args: args{
-				searchPaths: []string{"globPlus"},
+				searchPaths: []string{"rodnev"},
 				pattern:     "*.jsonnet",
 			},
 			want:    []string{},
 			wantErr: true,
 		},
 		{
-			name:   "one none-existing folder and one existing folder, but glob pattern doesn't match - should return empty result error",
-			fields: fields{},
+			name: "glob pattern doesn't match - should return empty result error",
+			fields: fields{
+				testFolders: []string{"vendor"},
+				testFiles: map[string]string{
+					"vendor/a.jsonnet": "{a: 1}",
+				},
+			},
 			args: args{
-				searchPaths: []string{"globPlus", "testdata"},
-				pattern:     "*.xsonnet",
+				searchPaths: []string{"vendor"},
+				pattern:     "*.xxxxx",
 			},
 			want:    []string{},
 			wantErr: true,
 		},
 		{
-			name:   "two jpath set and resolvedFiles are merged",
-			fields: fields{},
+			name: "two jpath set and resolvedFiles are merged",
+			fields: fields{
+				testFolders: []string{"vendor/models", "vendor/monaco"},
+				testFiles: map[string]string{
+					"vendor/monaco/a.libsonnet": "{a: 1}",
+					"vendor/models/b.libsonnet": "{b: 2}",
+				},
+			},
 			args: args{
-				searchPaths: []string{"testdata/globPlus", "testdata/globDot"},
+				searchPaths: []string{"vendor/models", "vendor/monaco"},
 				pattern:     "*.libsonnet",
 			},
-			want:    []string{"testdata/globDot/host.libsonnet", "testdata/globPlus/host.libsonnet"},
+			want:    []string{"vendor/models/b.libsonnet", "vendor/monaco/a.libsonnet"},
+			wantErr: false,
+		},
+		{
+			name: "one jpath set and resolvedFiles are merged - local path will be behind jpath",
+			fields: fields{
+				testFolders: []string{"vendor/models", "models"},
+				testFiles: map[string]string{
+					"models/a.jsonnet":        "{a: 1}",
+					"vendor/models/b.jsonnet": "{b: 2}",
+				},
+			},
+			args: args{
+				searchPaths: []string{"vendor/"},
+				cwd:         ".",
+				pattern:     "models/*.jsonnet",
+			},
+			want:    []string{"vendor/models/b.jsonnet", "models/a.jsonnet"},
 			wantErr: false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := &GlobImporter{
-				excludePattern: tt.fields.excludePattern,
+			g := NewGlobImporter()
+			g.excludePattern = tt.fields.excludePattern
+
+			fs := afero.NewMemMapFs()
+			for _, tF := range tt.fields.testFolders {
+				if err := fs.MkdirAll(tF, 0o755); err != nil {
+					t.Errorf("GlobImporter.resolveFilesFrom() error = %v", err)
+					return
+				}
 			}
-			got, err := g.resolveFilesFrom(tt.args.searchPaths, tt.args.pattern)
+			for file, cnt := range tt.fields.testFiles {
+				if err := afero.WriteFile(fs, file, []byte(cnt), 0o644); err != nil {
+					t.Errorf("GlobImporter.resolveFilesFrom() error = %v", err)
+					return
+				}
+			}
+			g.fs = fs
+
+			got, err := g.resolveFilesFrom(tt.args.searchPaths, tt.args.cwd, tt.args.pattern)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GlobImporter.resolveFilesFrom() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-func TestGlobImporter_AddAliasPrefix(t *testing.T) {
-	type fields struct {
-		JPaths         []string
-		logger         *zap.Logger
-		separator      string
-		prefixa        map[string]string
-		aliases        map[string]string
-		lastFiles      []string
-		cycleCache     map[globCacheKey]struct{}
-		excludePattern string
-	}
-	type args struct {
-		alias  string
-		prefix string
-	}
-	tests := []struct {
-		name    string
-		fields  fields
-		args    args
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := &GlobImporter{
-				JPaths:         tt.fields.JPaths,
-				logger:         tt.fields.logger,
-				separator:      tt.fields.separator,
-				prefixa:        tt.fields.prefixa,
-				aliases:        tt.fields.aliases,
-				lastFiles:      tt.fields.lastFiles,
-				cycleCache:     tt.fields.cycleCache,
-				excludePattern: tt.fields.excludePattern,
-			}
-			if err := g.AddAliasPrefix(tt.args.alias, tt.args.prefix); (err != nil) != tt.wantErr {
-				t.Errorf("GlobImporter.AddAliasPrefix() error = %v, wantErr %v", err, tt.wantErr)
-			}
 		})
 	}
 }
@@ -161,6 +183,11 @@ func TestGlobImporter_Import(t *testing.T) {
 		logger = zap.New(nil)
 	}
 
+	type fields struct {
+		testFolders []string
+		testFiles   map[string]string
+	}
+
 	type args struct {
 		importedFrom string
 		importedPath string
@@ -168,69 +195,36 @@ func TestGlobImporter_Import(t *testing.T) {
 	tests := []struct {
 		name        string
 		jpaths      []string
+		fields      fields
 		args        args
 		want        jsonnet.Contents
 		wantFoundAt string
 		wantErr     bool
 	}{
-		// ----------------------------------------------------- jpath handling
 		{
-			name:   "with jpath set",
-			jpaths: []string{"testdata/globPlus"},
-			args: args{
-				importedFrom: "",
-				importedPath: "glob+://*.libsonnet",
-			},
-			want:        jsonnet.MakeContents("(import 'testdata/globPlus/host.libsonnet')"),
-			wantFoundAt: "./",
-		},
-		{
-			name:   "with jpath set to a models folder inside and outside vendor folder - contents are merged",
-			jpaths: []string{"testdata/globJPaths/vendor", "testdata/globJPaths/"},
-			args: args{
-				importedFrom: "",
-				importedPath: "glob+://models/*.jsonnet",
-			},
-			want: jsonnet.MakeContents(
-				"(import 'testdata/globJPaths/models/x.jsonnet')+(import 'testdata/globJPaths/vendor/models/y.jsonnet')",
-			),
-			wantFoundAt: "./",
-		},
-		//{
-		//	name:   "with jpath set to a models folder inside vendor folder and same folder in cwd - contents are merged",
-		//	jpaths: []string{"testvendor"},
-		//	args: args{
-		//		importedFrom: "",
-		//		importedPath: "glob+://models/*.jsonnet",
-		//	},
-		//	want: jsonnet.MakeContents(
-		//		"(import 'models/x.jsonnet')+(import 'vendor/models/y.jsonnet')",
-		//	),
-		//	wantFoundAt: "./",
-		//},
-		{
-			name:   "with jpath set and same file found via glob - no duplication",
-			jpaths: []string{"testdata/globPlus"},
-			args: args{
-				importedFrom: "",
-				importedPath: "glob+://testdata/globPlus/*.libsonnet",
-			},
-			want:        jsonnet.MakeContents("(import 'testdata/globPlus/host.libsonnet')"),
-			wantFoundAt: "./",
-		},
-		{
-			name:   "with jpath set for cwd and file found via glob - even that is nonsens",
-			jpaths: []string{"."},
-			args: args{
-				importedFrom: "",
-				importedPath: "glob+://testdata/globPlus/*.libsonnet",
-			},
-			want:        jsonnet.MakeContents("(import 'testdata/globPlus/host.libsonnet')+(import 'testdata/globPlus/host.libsonnet')"),
-			wantFoundAt: "./",
-		},
-		{
-			name:   "without jpath set - should return error",
+			name:   "glob matches - simple",
 			jpaths: []string{},
+			fields: fields{
+				testFiles: map[string]string{
+					"a.jsonnet": "{a: 1}",
+				},
+			},
+			args: args{
+				importedFrom: "",
+				importedPath: "glob+://*.jsonnet",
+			},
+			want:        jsonnet.MakeContents("(import 'a.jsonnet')"),
+			wantFoundAt: "./",
+			wantErr:     false,
+		},
+		{
+			name:   "glob does not match any file - should return error",
+			jpaths: []string{},
+			fields: fields{
+				testFiles: map[string]string{
+					"a.jsonnet": "{a: 1}",
+				},
+			},
 			args: args{
 				importedFrom: "",
 				importedPath: "glob+://*.libsonnet",
@@ -240,25 +234,74 @@ func TestGlobImporter_Import(t *testing.T) {
 			wantErr:     true,
 		},
 		{
-			name:   "without jpath set, but right path in import string",
-			jpaths: []string{},
+			name:   "jpath set - same file in cwd found - cwd file has higher priority",
+			jpaths: []string{"vendor"},
+			fields: fields{
+				testFolders: []string{"vendor"},
+				testFiles: map[string]string{
+					"b.jsonnet":        "{b: 1}",
+					"vendor/b.jsonnet": "{b: 2}",
+				},
+			},
 			args: args{
 				importedFrom: "",
-				importedPath: "glob+://testdata/globPlus/*.libsonnet",
+				importedPath: "glob+://*.jsonnet",
 			},
-			want:        jsonnet.MakeContents("(import 'testdata/globPlus/host.libsonnet')"),
+			want:        jsonnet.MakeContents("(import 'vendor/b.jsonnet')+(import 'b.jsonnet')"),
 			wantFoundAt: "./",
-			wantErr:     false,
+		},
+		{
+			name:   "jpath and cwd file given - imports have correct lexicographical and hierachically order",
+			jpaths: []string{"vendor/b/dev", "vendor/a/prod/canary", "vendor/a/prod"},
+			fields: fields{
+				testFolders: []string{"vendor/b/dev", "vendor/a/prod/canary", "vendor/a/prod"},
+				testFiles: map[string]string{
+					"a.jsonnet":                      "{a: 1}",
+					"vendor/a/prod/a.jsonnet":        "{a: 2}",
+					"vendor/a/prod/canary/a.jsonnet": "{a: 3}",
+					"vendor/b/dev/b.jsonnet":         "{b: 1}",
+				},
+			},
+			args: args{
+				importedFrom: "",
+				importedPath: "glob+://*.jsonnet",
+			},
+			want: jsonnet.MakeContents(
+				"(import 'vendor/a/prod/a.jsonnet')+(import 'vendor/a/prod/canary/a.jsonnet')+(import 'vendor/b/dev/b.jsonnet')+(import 'a.jsonnet')",
+			),
+			wantFoundAt: "./",
+		},
+		{
+			name:   "jpath set to cwd - duplicates imports",
+			jpaths: []string{"."},
+			fields: fields{
+				testFiles: map[string]string{
+					"a.jsonnet": "{a: 1}",
+				},
+			},
+			args: args{
+				importedFrom: "",
+				importedPath: "glob+://*.jsonnet",
+			},
+			want:        jsonnet.MakeContents("(import 'a.jsonnet')+(import 'a.jsonnet')"),
+			wantFoundAt: "./",
 		},
 		{
 			name:   "two jpath set and contents are merged",
-			jpaths: []string{"testdata/globPlus", "testdata/globDot"},
+			jpaths: []string{"vendor/a", "vendor/b"},
+			fields: fields{
+				testFolders: []string{"vendor/a", "vendor/b"},
+				testFiles: map[string]string{
+					"vendor/a/b.jsonnet": "{b: 1}",
+					"vendor/b/b.jsonnet": "{b: 2}",
+				},
+			},
 			args: args{
 				importedFrom: "",
-				importedPath: "glob+://*.libsonnet",
+				importedPath: "glob+://*.jsonnet",
 			},
 			want: jsonnet.MakeContents(
-				"(import 'testdata/globDot/host.libsonnet')+(import 'testdata/globPlus/host.libsonnet')",
+				"(import 'vendor/a/b.jsonnet')+(import 'vendor/b/b.jsonnet')",
 			),
 			wantFoundAt: "./",
 		},
@@ -267,6 +310,22 @@ func TestGlobImporter_Import(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewGlobImporter(tt.jpaths...)
 			g.Logger(logger)
+
+			fs := afero.NewMemMapFs()
+			for _, tF := range tt.fields.testFolders {
+				if err := fs.MkdirAll(tF, 0o755); err != nil {
+					t.Errorf("GlobImporter.Import() error = %v", err)
+					return
+				}
+			}
+			for file, cnt := range tt.fields.testFiles {
+				if err := afero.WriteFile(fs, file, []byte(cnt), 0o644); err != nil {
+					t.Errorf("GlobImporter.Import() error = %v", err)
+					return
+				}
+			}
+			g.fs = fs
+
 			got, gotFoundAt, err := g.Import(tt.args.importedFrom, tt.args.importedPath)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GlobImporter.Import() error = %v, wantErr %v", err, tt.wantErr)
@@ -275,125 +334,6 @@ func TestGlobImporter_Import(t *testing.T) {
 
 			assert.Equal(t, tt.want, got)
 			assert.Equal(t, tt.wantFoundAt, gotFoundAt)
-		})
-	}
-}
-
-func TestGlobImporter_parse(t *testing.T) {
-	type fields struct {
-		JPaths         []string
-		logger         *zap.Logger
-		separator      string
-		prefixa        map[string]string
-		aliases        map[string]string
-		lastFiles      []string
-		cycleCache     map[globCacheKey]struct{}
-		excludePattern string
-	}
-	type args struct {
-		importedPath string
-	}
-	tests := []struct {
-		name    string
-		fields  fields
-		args    args
-		want    string
-		want1   string
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := &GlobImporter{
-				JPaths:         tt.fields.JPaths,
-				logger:         tt.fields.logger,
-				separator:      tt.fields.separator,
-				prefixa:        tt.fields.prefixa,
-				aliases:        tt.fields.aliases,
-				lastFiles:      tt.fields.lastFiles,
-				cycleCache:     tt.fields.cycleCache,
-				excludePattern: tt.fields.excludePattern,
-			}
-			got, got1, err := g.parse(tt.args.importedPath)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("GlobImporter.parse() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if got != tt.want {
-				t.Errorf("GlobImporter.parse() got = %v, want %v", got, tt.want)
-			}
-			if got1 != tt.want1 {
-				t.Errorf("GlobImporter.parse() got1 = %v, want %v", got1, tt.want1)
-			}
-		})
-	}
-}
-
-func TestGlobImporter_handle(t *testing.T) {
-	type fields struct {
-		JPaths         []string
-		logger         *zap.Logger
-		separator      string
-		prefixa        map[string]string
-		aliases        map[string]string
-		lastFiles      []string
-		cycleCache     map[globCacheKey]struct{}
-		excludePattern string
-	}
-	type args struct {
-		files  []string
-		prefix string
-	}
-	tests := []struct {
-		name    string
-		fields  fields
-		args    args
-		want    string
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := GlobImporter{
-				JPaths:         tt.fields.JPaths,
-				logger:         tt.fields.logger,
-				separator:      tt.fields.separator,
-				prefixa:        tt.fields.prefixa,
-				aliases:        tt.fields.aliases,
-				lastFiles:      tt.fields.lastFiles,
-				cycleCache:     tt.fields.cycleCache,
-				excludePattern: tt.fields.excludePattern,
-			}
-			got, err := g.handle(tt.args.files, tt.args.prefix)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("GlobImporter.handle() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if got != tt.want {
-				t.Errorf("GlobImporter.handle() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func Test_createGlobDotImportsFrom(t *testing.T) {
-	type args struct {
-		resolvedFiles *orderedMap
-	}
-	tests := []struct {
-		name string
-		args args
-		want string
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := createGlobDotImportsFrom(tt.args.resolvedFiles); got != tt.want {
-				t.Errorf("createGlobDotImportsFrom() = %v, want %v", got, tt.want)
-			}
 		})
 	}
 }

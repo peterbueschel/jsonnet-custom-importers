@@ -18,15 +18,21 @@
 
 ## Custom Importers
 
-The main idea is to add a kind of [intrinsic functionality](https://en.wikipedia.org/wiki/Intrinsic_function) into the import path string by adding extra strings. The custom importers can parse these extra strings and act on them.
+The main idea is to add a kind of *[intrinsic functionality](https://en.wikipedia.org/wiki/Intrinsic_function)* into the **import path string** by adding extra content. The custom importers can parse these extra content and act on them.
 
-The pattern for the import path is
+The pattern for the import path is based on [URLs](https://pkg.go.dev/net/url#URL)
 
-```jsonnet
-import '<importer prefix><separator><glob-pattern or filepath or url>'
+- url:
+
+```txt
+[scheme:][//[userinfo@]host][/]path[?query][#fragment]
 ```
 
-⚠️ The default `<separator>` is `://`
+- import pattern:
+
+```jsonnet
+import '[<importer-prefix>://][<glob-pattern>|<filepath>][?<query-parameters>]'
+```
 
 <details>
   <summary>Example patterns</summary>
@@ -38,7 +44,7 @@ import '<importer prefix><separator><glob-pattern or filepath or url>'
 import 'example.jsonnet'
 ```
 
-where the `<importer prefix>` and the `<separator>`  are empty strings. The `<filepath>` is `example.jsonnet`
+where the `[<importer-prefix>://]` is empty and the `<filepath>` is `example.jsonnet`
 
 #### Custom GlobImporter
 
@@ -46,17 +52,25 @@ where the `<importer prefix>` and the `<separator>`  are empty strings. The `<fi
 import 'glob.stem+://**/*.jsonnet'
 ```
 
-where `glob.stem+` is one of the possible `<importer prefixa>`, the `://` is the `<separator>` between the intrinsic functions and the `<glob pattern>` (here: `**/*.jsonnet`)
+where `glob.stem+` is the `<importer-prefix>` and the `<glob-pattern>` is `**/*.jsonnet`.
+
+#### Custom GlobImporter With Query-Parameter
+
+```jsonnet
+import 'glob.stem+://**/*.jsonnet?exclude=**/*ignore.*'
+```
+
+same as before but in addition with the `<query-parameter>` `exclude=**/*ignore.*`.
 
 </details>
 
 
 ### List of available custom importers and the supported prefixa
 
-| Name            | prefix in `import` path               | prefix in `importstr` path                   | extra intrinsic functionality                                                            |
-| ----            | ---                                   | ---                                          | ---                                                                                      |
-| `MultiImporter` | any - will address the right importer | any                                          |                                                                                          |
-| `GlobImporter`  | `glob.<?>`, `glob.<?>+`, `glob+`      | `glob-str.<?>`, `glob-str.<?>+`, `glob-str+` | a `!` after the prefix followed by another `<globpattern>`  can be used to exclude files |
+| Name            | `<importer-prefix>` in `import` path  | `<importer-prefix>` in `importstr` path      | `<query-parameters>`                               |
+| ----            | ---                                   | ---                                          | -----                                              |
+| `MultiImporter` | any - will address the right importer | any                                          | `logLevel=<info\|debug>`, `importGraph=<filepath>` |
+| `GlobImporter`  | `glob.<?>`, `glob.<?>+`, `glob+`      | `glob-str.<?>`, `glob-str.<?>+`, `glob-str+` | `logLevel=<info\|debug>`, `exclude=<glob-pattern>` |
 
 ---
 
@@ -72,11 +86,13 @@ where `glob.stem+` is one of the possible `<importer prefixa>`, the `://` is the
 ## GlobImporter
 
 - Is a custom importer, which:
-	- **Imports multiple files at once** with [glob patterns](https://en.wikipedia.org/wiki/Glob_(programming)) handled by the [doublestar](https://github.com/bmatcuk/doublestar) library.
+	- **Imports multiple files at once** via [glob patterns](https://en.wikipedia.org/wiki/Glob_(programming)) handled by the [doublestar](https://github.com/bmatcuk/doublestar) library.
 	- Supports **Continuous** imports: If inside the resolved files other glob-patterns will be found, the *GlobImporter* will also take these *glob-imports* and resolves the underlying files.
-	- Can **Exclude** imports: use the `!<glob pattern>` right after a prefix to exclude files from further handlings.
-- Activate the _glob-import_ via the prefix **`glob.<?>`**  or **`glob.<?>+`** to get the content of the resolved files as object. The content of each file will be available under its resolved **path**, **file**name, **stem** (filename with file extension) or **dir**name. (see also table in section "Prefix `glob.<?>` And `glob.<?>+`")
-- Use the prefix **`glob+`** to merge the returned imports. (similar to the jsonnet `+:` functionality)
+	- Can **Exclude** imports: use `exclude=<glob pattern>` as query parameter to exclude files from further handlings.
+    - Supports extra **JPaths**: extra search paths for additional libraries. (⚠️ matches of library paths have a lower priority then matches in the current work dir)
+    - **Sorts** the resolved files: in lexicographical and hierarchical order. Example: `[a0 b02 a0/b/c a1 d/x c b2 a1/b b10]` becomes `[a0 a0/b/c a1 a1/b b02 b10 b2 c d/x]` 
+- Activate the _glob-import_ via the prefix `glob.<?>` or `glob.<?>+` to get the content of the resolved files as object. The content of each file will be available under its resolved **path**, **file**name, **stem** (filename with file extension) or **dir**name. (see also table in section "Prefix `glob.<?>` And `glob.<?>+`")
+- Use the prefix `glob+` to merge the returned imports. (similar to the jsonnet `+:` functionality)
 
 
 
@@ -107,14 +123,14 @@ models
 - Each resolved file, which matched the glob pattern, will be handled individually and will be available in the code under a specific variable name. The variable name can be specified in the `<?>` part.
 - `<?>` can be one of the following options:
   
-  | option       | example result |
-  |------------|------------------|
+  | option       | example result   |
+  |--------------|------------------|
   | `path`       | `/foo/bar/baa.jsonnet` |
-  | `file`   | `baa.jsonnet`        |
+  | `file`      | `baa.jsonnet`        |
   | `stem`       | `baa`             |
   | `dir`        | `/foo/bar/`        |
 
-- ⚠️ On colliding `file`|`stem`|`dir` -names, only the last resolved result in the hierarchy (shortest path first) will be used. Use the `glob.<?>+` (extra `+`) prefix to merge colliding names instead. The imports will be merged in hierarchical and [lexicographical](https://pkg.go.dev/sort#Strings) order similar to `glob+`. (also note: `glob.path` and `glob.path+` are the same)
+- ⚠️ On colliding `file`|`stem`|`dir` -names, only the last resolved result in the hierarchy will be used. Use the `glob.<?>+` (extra `+`) prefix to merge colliding names instead. The imports will be merged in hierarchical and lexicographical order similar to `glob+`. (also note: `glob.path` and `glob.path+` are the same)
 
 ##### Example Input `glob.path`
 
@@ -199,7 +215,7 @@ import 'glob.stem+!models/**/*grafana*://models/**/*.libsonnet'
   <summary><h4>Prefix `glob+`</h4></summary>
 
 
-These files will be merged in the hierarchical (shortest path first) and [lexicographical](https://pkg.go.dev/sort#Strings) order.
+These files will be merged in the hierarchical and lexicographical order.
 
 ##### Example Input
 
@@ -224,7 +240,7 @@ Code which will be evaluated in jsonnet:
 
 ### Logging
 
-Enable/add a [zap.Logger](https://github.com/uber-go/zap) via `<Importer>.Logger()` per Importer or just use the this method on the `MultiImporter` instance to enable this of all underlying custom importers:
+Enable/add a [zap.Logger](https://github.com/uber-go/zap) via `<Importer>.Logger()` **per importer** or just use the this method on the `MultiImporter` instance to enable this of all underlying custom importers:
 
 ```go
 import (
@@ -235,6 +251,17 @@ import (
 l := zap.Must(zap.NewDevelopment()) // or use zap.NewProduction() to avoid debug messages
 m := NewMultiImporter()
 m.Logger(l)
+...
+```
+
+**(update since v0.0.3-alpha)** Another option is to use the special *config* import inside an `jsonnet` file:
+
+```jsonnet
+// set the logLevel
+local importers = import 'config://set?logLevel=debug';
+
+// enable it for example via:
+local myother_imports = importers + (import 'somethingElse.jsonnet');
 ...
 ```
 
@@ -251,11 +278,37 @@ Add an alias for an importer prefix, like:
 
 The `SetAliasPrefix()` can be used multiple times, whereby only the last setting for an alias-prefix pair will be used.
 
+### Import Graph
+
+The `MultiImporter` can detect [import cycles](https://en.wikipedia.org/wiki/Circular_dependency)
+and creates an *import graph* in [dot](https://www.graphviz.org/documentation/) format once it found a cycle.
+
+In addition such *import graphs* can also be enable independently via the special *config* import inside an `jsonnet` file:
+
+```jsonnet
+// set the import graph file name
+local importers = import 'config://set?importGraph=import_graph.gv';
+
+// enable the file creation:
+local myother_imports = importers + (import 'somethingElse.jsonnet');
+...
+```
+
+Example image from [testdata/inFileConfigs/importGraph.jsonnet](testdata/inFileConfigs/importGraph.jsonnet):
+
+![](docs/pics/importgraph.svg)
+
+> the image was created via `dot -Tsvg -O graph.gv` command (ref. [graphviz cli tool](https://graphviz.org/doc/info/command.html))
+
+
+
+
 ## Dependencies
 
 - https://github.com/google/go-jsonnet the reason for everything :-)
 - https://github.com/bmatcuk/doublestar support for double star (`**`) glob patterns
 - https://github.com/uber-go/zap for structured logging
+- https://github.com/dominikbraun/graph to check for import cycles and generate import graphs
 
 ## Other Projects
 
