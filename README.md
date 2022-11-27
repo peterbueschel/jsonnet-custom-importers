@@ -118,7 +118,7 @@ models
 
 
 <details>
-  <summary><h4>Prefix `glob.<?>` And `glob.<?>+`</h4></summary>
+  <summary><h4>Prefix `glob.&lt;?&gt;` And `glob.&lt;?&gt;+`</h4></summary>
 
 - Each resolved file, which matched the glob pattern, will be handled individually and will be available in the code under a specific variable name. The variable name can be specified in the `<?>` part.
 - `<?>` can be one of the following options:
@@ -188,24 +188,6 @@ Code which will be evaluated in jsonnet:
    grafana: (import 'models/development/grafana.libsonnet') + (import 'models/production/grafana.libsonnet'),
    victor_ops: import 'models/production/victor_ops.libsonnet',
  }
-```
-
-##### Example Input `glob.stem+!`
-
-```jsonnet
-import 'glob.stem+!models/**/*grafana*://models/**/*.libsonnet'
-```
-
-##### Example Result `glob.stem+!`
-
-```jsonnet
-{
-  blackbox_exporter: import 'models/blackbox_exporter.libsonnet',
-  node_exporter: import 'models/node_exporter.libsonnet',
-  wavefront: import 'models/wavefront.libsonnet',
- 
-  victor_ops: import 'models/production/victor_ops.libsonnet',
-}
 ```
 
 </details>
