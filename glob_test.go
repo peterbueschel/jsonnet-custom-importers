@@ -337,3 +337,71 @@ func TestGlobImporter_Import(t *testing.T) {
 		})
 	}
 }
+
+func TestGlobImporter_handle(t *testing.T) {
+	type fields struct {
+		aliases map[string]string
+	}
+	type args struct {
+		files  []string
+		prefix string
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "glob-str+",
+			args: args{
+				files:  []string{"a.jsonnet", "b.jsonnet"},
+				prefix: "glob-str+",
+			},
+			want:    `(importstr 'a.jsonnet')+(importstr 'b.jsonnet')`,
+			wantErr: false,
+		},
+		{
+			name: "glob+",
+			args: args{
+				files:  []string{"a.jsonnet", "b.jsonnet"},
+				prefix: "glob+",
+			},
+			want:    `(import 'a.jsonnet')+(import 'b.jsonnet')`,
+			wantErr: false,
+		},
+		// ---------------------------------------------------------- glob.file
+		{
+			name: "glob.file",
+			args: args{
+				files:  []string{"a.jsonnet", "b.jsonnet"},
+				prefix: "glob.file",
+			},
+			want:    "{\n'a.jsonnet': (import 'a.jsonnet'),\n'b.jsonnet': (import 'b.jsonnet'),\n}",
+			wantErr: false,
+		},
+		{
+			name: "glob-str.file",
+			args: args{
+				files:  []string{"a.jsonnet", "b.jsonnet"},
+				prefix: "glob-str.file",
+			},
+			want:    "{\n'a.jsonnet': (importstr 'a.jsonnet'),\n'b.jsonnet': (importstr 'b.jsonnet'),\n}",
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewGlobImporter()
+			g.aliases = tt.fields.aliases
+
+			got, err := g.handle(tt.args.files, tt.args.prefix)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GlobImporter.handle() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

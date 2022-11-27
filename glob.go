@@ -416,8 +416,8 @@ func (g GlobImporter) handle(files []string, prefix string) (string, error) {
 	// handle import or importstr
 	importKind := "import"
 
-	if strings.HasPrefix(prefix, "-str") {
-		prefix = strings.TrimPrefix(prefix, "-str")
+	if strings.HasPrefix(prefix, "glob-str") {
+		prefix = strings.Replace(prefix, "glob-str", "glob", 1)
 		importKind += "str"
 	}
 
@@ -481,7 +481,7 @@ func createGlobDotImportsFrom(resolvedFiles *orderedMap) string {
 		fmt.Fprintf(&out, "'%s': %s,\n", k, strings.Join(resolvedFiles.items[k], "+"))
 	}
 
-	out.WriteString("\n}")
+	out.WriteString("}")
 
 	return out.String()
 }
