@@ -63,14 +63,15 @@ type (
 	// MultiImporter supports multiple importers and tries to find the right
 	// importer from a list of importers.
 	MultiImporter struct {
-		importers         []Importer
-		logger            *zap.Logger
-		logLevel          string
-		importGraph       graph.Graph[string, string]
-		importCounter     int
-		importGraphFile   string
-		enableImportGraph bool
-		fs                afero.Fs
+		importers          []Importer
+		logger             *zap.Logger
+		logLevel           string
+		ignoreImportCycles bool
+		importGraph        graph.Graph[string, string]
+		importCounter      int
+		importGraphFile    string
+		enableImportGraph  bool
+		fs                 afero.Fs
 	}
 )
 
@@ -105,11 +106,12 @@ func NewMultiImporter(importers ...Importer) *MultiImporter {
 		importGraph: graph.New(
 			graph.StringHash, graph.Tree(), graph.Directed(), graph.Weighted(),
 		),
-		importGraphFile:   importGraphFileName,
-		fs:                afero.NewOsFs(),
-		logLevel:          "",
-		importCounter:     0,
-		enableImportGraph: false,
+		importGraphFile:    importGraphFileName,
+		fs:                 afero.NewOsFs(),
+		logLevel:           "",
+		ignoreImportCycles: false,
+		importCounter:      0,
+		enableImportGraph:  false,
 	}
 	if len(multiImporter.importers) == 0 {
 		multiImporter.importers = []Importer{
@@ -135,6 +137,12 @@ func (m *MultiImporter) Logger(logger *zap.Logger) {
 func (m *MultiImporter) SetImportGraphFile(name string) {
 	m.importGraphFile = name
 	m.enableImportGraph = true
+}
+
+// IgnoreImportCycles disables the test for import cycles and therefore also any
+// error in that regard.
+func (m *MultiImporter) IgnoreImportCycles() {
+	m.ignoreImportCycles = true
 }
 
 // Import is used by go-jsonnet to run this importer. It implements the go-jsonnet
@@ -198,10 +206,12 @@ func (m *MultiImporter) parseImportString(importedFrom, importedPath string) (st
 
 		return prefix, nil
 	case "": // "normal" imports
-		if err := m.findImportCycle(importedFrom, importedPath); err != nil {
-			return "",
-				fmt.Errorf("%w detected with adding %s to %s. DOT-graph stored in '%s'",
-					ErrImportCycle, importedFrom, importedPath, m.importGraphFile)
+		if !m.ignoreImportCycles {
+			if err := m.findImportCycle(importedFrom, importedPath); err != nil {
+				return "",
+					fmt.Errorf("%w detected with adding %s to %s. DOT-graph stored in '%s'",
+						ErrImportCycle, importedFrom, importedPath, m.importGraphFile)
+			}
 		}
 
 		if m.enableImportGraph {
@@ -280,6 +290,10 @@ func (m *MultiImporter) parseInFileConfigs(rawQuery string) error {
 	if file, exists := query["importGraph"]; exists {
 		m.importGraphFile = file[0]
 		m.enableImportGraph = true
+	}
+
+	if _, exists := query["ignoreImportCycles"]; exists {
+		m.ignoreImportCycles = true
 	}
 
 	if level, exists := query["logLevel"]; exists {

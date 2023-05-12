@@ -20,13 +20,14 @@ func TestMultiImporter_parseInFileConfigs(t *testing.T) {
 		rawQuery string
 	}
 	tests := []struct {
-		name                  string
-		wantLogLevel          string
-		wantImportGraphFile   string
-		args                  args
-		wantEnableImportGraph bool
-		wantErr               bool
-		wantErrType           error
+		name                   string
+		wantLogLevel           string
+		wantImportGraphFile    string
+		args                   args
+		wantEnableImportGraph  bool
+		wantIgnoreImportCycles bool
+		wantErr                bool
+		wantErrType            error
 	}{
 		{
 			name: "empty_query",
@@ -79,6 +80,14 @@ func TestMultiImporter_parseInFileConfigs(t *testing.T) {
 			wantErrType:         ErrMalformedQuery,
 			wantImportGraphFile: importGraphFileName,
 		},
+		{
+			name: "ignoreImportCycles",
+			args: args{
+				rawQuery: "ignoreImportCycles",
+			},
+			wantImportGraphFile:    importGraphFileName,
+			wantIgnoreImportCycles: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -92,9 +101,11 @@ func TestMultiImporter_parseInFileConfigs(t *testing.T) {
 				assert.ErrorIs(t, err, tt.wantErrType)
 			}
 
+			assert.Equal(t, tt.wantIgnoreImportCycles, m.ignoreImportCycles)
 			assert.Equal(t, tt.wantLogLevel, m.logLevel)
 			assert.Equal(t, tt.wantImportGraphFile, m.importGraphFile)
 			assert.Equal(t, tt.wantEnableImportGraph, m.enableImportGraph)
+
 		})
 	}
 }
@@ -210,6 +221,85 @@ func addRelativesToGraph(
 	}
 	_ = g.AddEdge(given, relative, graph.EdgeWeight(counter))
 	return g
+}
+
+func TestMultiImporter_parseImportString(t *testing.T) {
+	type args struct {
+		importedFrom string
+		importedPath string
+	}
+
+	type fields struct {
+		ignoreImportCycles bool
+		// for the cycle tests
+		importGraph   graph.Graph[string, string]
+		importCounter int
+	}
+
+	tests := []struct {
+		name        string
+		args        args
+		fields      fields
+		want        string
+		wantErr     bool
+		wantErrType error
+	}{
+		{
+			name: "importPath with ignoreImportCycles set - should not fail even import importcycle exists",
+			args: args{
+				importedFrom: "caller.jsonnet",
+				importedPath: "caller.jsonnet",
+			},
+			fields: fields{
+				importGraph: graph.New(
+					graph.StringHash, graph.Tree(), graph.Directed(), graph.Weighted(),
+				),
+				importCounter:      0,
+				ignoreImportCycles: true,
+			},
+			want:        "",
+			wantErr:     false,
+			wantErrType: nil,
+		},
+		{
+			name: "importPath without ignoreImportCycles set - should fail as importcycle exists",
+			args: args{
+				importedFrom: "caller.jsonnet",
+				importedPath: "caller.jsonnet",
+			},
+			fields: fields{
+				importGraph: graph.New(
+					graph.StringHash, graph.Tree(), graph.Directed(), graph.Weighted(),
+				),
+				importCounter:      0,
+				ignoreImportCycles: false,
+			},
+			want:        "",
+			wantErr:     true,
+			wantErrType: ErrImportCycle,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewMultiImporter()
+			fs := afero.NewMemMapFs()
+			m.fs = fs
+			m.importGraph = tt.fields.importGraph
+			if tt.fields.ignoreImportCycles {
+				m.IgnoreImportCycles()
+			}
+			got, err := m.parseImportString(tt.args.importedFrom, tt.args.importedPath)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("MultiImporter.parseImportString() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr {
+				assert.ErrorIs(t, err, tt.wantErrType)
+			}
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestMultiImporter_findImportCycle(t *testing.T) {
@@ -412,7 +502,7 @@ func TestMultiImporter_findImportCycle(t *testing.T) {
 			m.fs = fs
 			err := m.findImportCycle(tt.args.importedFrom, tt.args.importedPath)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("MultiImporter.parseInFileConfigs() %v", err)
+				t.Errorf("MultiImporter.findImportCycle() %v", err)
 				return
 			}
 			if tt.showMe {

@@ -9,7 +9,13 @@
 - A custom importer can be set for a [jsonnet VM](https://pkg.go.dev/github.com/google/go-jsonnet?utm_source=godoc#VM) like:
 
 ```go
-    m := NewMultiImporter()
+import (
+    ...
+	importer "github.com/peterbueschel/jsonnet-custom-importers"
+)
+...
+    
+    m := importer.NewMultiImporter()
     vm := jsonnet.MakeVM()
     vm.Importer(m)
 ```
@@ -282,7 +288,25 @@ Example image from [testdata/inFileConfigs/importGraph.jsonnet](testdata/inFileC
 
 > the image was created via `dot -Tsvg -O graph.gv` command (ref. [graphviz cli tool](https://graphviz.org/doc/info/command.html))
 
+### Ignore Import Cycles
 
+To disable the tests and therefore any error handling for *import cycles*, you can use the following config in your *jsonnet* code:
+
+```jsonnet
+// set the import graph file name
+local importers = import 'config://set?ignoreImportCycles';
+
+// enable the file creation:
+local myother_imports = importers + (import 'somethingElse.jsonnet');
+...
+```
+
+Or directly in your go code via:
+
+```go
+ m := NewMultiImporter(g)
+ m.IgnoreImportCycles()
+```
 
 
 ## Dependencies
