@@ -296,7 +296,7 @@ func (g *GlobImporter) resolveFilesFrom(searchPaths []string, cwd, pattern strin
 			return
 		}
 
-		if matches, err = doublestar.Glob(fs, file); err != nil {
+		if matches, err = doublestar.Glob(fs, file, doublestar.WithNoFollow(), doublestar.WithFailOnIOErrors()); err != nil {
 			return
 		}
 
