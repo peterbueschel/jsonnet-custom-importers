@@ -26,6 +26,7 @@ func TestMultiImporter_parseInFileConfigs(t *testing.T) {
 		args                   args
 		wantEnableImportGraph  bool
 		wantIgnoreImportCycles bool
+		wantOnMissingFile      *onMissingFile
 		wantErr                bool
 		wantErrType            error
 	}{
@@ -88,6 +89,30 @@ func TestMultiImporter_parseInFileConfigs(t *testing.T) {
 			wantImportGraphFile:    importGraphFileName,
 			wantIgnoreImportCycles: true,
 		},
+		{
+			name: "onMissingFile_file",
+			args: args{
+				rawQuery: "onMissingFile=default.jsonnet",
+			},
+			wantImportGraphFile: importGraphFileName,
+			wantOnMissingFile: &onMissingFile{
+				enabled: true,
+				kind:    "file",
+				file:    "default.jsonnet",
+			},
+		},
+		{
+			name: "onMissingFile_content",
+			args: args{
+				rawQuery: `onMissingFile="{}"`,
+			},
+			wantImportGraphFile: importGraphFileName,
+			wantOnMissingFile: &onMissingFile{
+				enabled: true,
+				kind:    "content",
+				content: "{}",
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -102,6 +127,7 @@ func TestMultiImporter_parseInFileConfigs(t *testing.T) {
 			}
 
 			assert.Equal(t, tt.wantIgnoreImportCycles, m.ignoreImportCycles)
+			assert.Equal(t, tt.wantOnMissingFile, m.onMissingFile)
 			assert.Equal(t, tt.wantLogLevel, m.logLevel)
 			assert.Equal(t, tt.wantImportGraphFile, m.importGraphFile)
 			assert.Equal(t, tt.wantEnableImportGraph, m.enableImportGraph)
@@ -118,23 +144,23 @@ func TestMultiImporter_InFileConfigs(t *testing.T) {
 		``,
 		`	"testdata/inFileConfigs/importGraph.jsonnet" [ shape="house",  weight=0 ];`,
 		``,
-		`	"testdata/inFileConfigs/importGraph.jsonnet" -> "caller.jsonnet" [  weight=1 ];`,
+		`	"testdata/inFileConfigs/importGraph.jsonnet" -> "caller.jsonnet" [  weight=2 ];`,
 		``,
 		`	"caller.jsonnet" [ shape="house",  weight=0 ];`,
 		``,
-		`	"caller.jsonnet" -> "testdata/inFileConfigs/caller.jsonnet" [  weight=1 ];`,
+		`	"caller.jsonnet" -> "testdata/inFileConfigs/caller.jsonnet" [  weight=2 ];`,
 		``,
 		`	"testdata/inFileConfigs/caller.jsonnet" [  weight=0 ];`,
 		``,
-		`	"testdata/inFileConfigs/caller.jsonnet" -> "libs/host.libsonnet" [  weight=3 ];`,
+		`	"testdata/inFileConfigs/caller.jsonnet" -> "libs/host.libsonnet" [  weight=5 ];`,
 		``,
 		`	"glob.stem+://libs/*.libsonnet" [ color="grey", fontcolor="grey", shape="rect", style="dashed",  weight=0 ];`,
 		``,
-		`	"glob.stem+://libs/*.libsonnet" -> "libs/host.libsonnet" [ color="grey", style="dashed",  weight=3 ];`,
+		`	"glob.stem+://libs/*.libsonnet" -> "libs/host.libsonnet" [ color="grey", style="dashed",  weight=5 ];`,
 		``,
 		`	"libs/host.libsonnet" [ color="grey", fontcolor="grey", shape="rect", style="dashed",  weight=0 ];`,
 		``,
-		`	"libs/host.libsonnet" -> "testdata/inFileConfigs/libs/host.libsonnet" [  weight=3 ];`,
+		`	"libs/host.libsonnet" -> "testdata/inFileConfigs/libs/host.libsonnet" [  weight=5 ];`,
 		``,
 		`	"testdata/inFileConfigs/libs/host.libsonnet" [  weight=0 ];`,
 		``,
@@ -147,11 +173,13 @@ func TestMultiImporter_InFileConfigs(t *testing.T) {
 	sort.Strings(wantGraphLines)
 
 	tests := []struct {
-		name         string
-		callerFile   string
-		wantLogLevel string
-		wantGraph    []string
-		wantErr      bool
+		name              string
+		callerFile        string
+		wantLogLevel      string
+		wantGraph         []string
+		wantErr           bool
+		wantOnMissingFile *onMissingFile
+		want              string
 	}{
 		{
 			name:         "logLevel_info",
@@ -169,6 +197,47 @@ func TestMultiImporter_InFileConfigs(t *testing.T) {
 			wantLogLevel: "info",
 			wantGraph:    wantGraphLines,
 		},
+		{
+			name:       "onMissingFile_content",
+			callerFile: "testdata/inFileConfigs/onMissingFile_content.jsonnet",
+			wantOnMissingFile: &onMissingFile{
+				enabled: true,
+				kind:    "content",
+				content: "{missing: true}",
+			},
+			want: "{\n   \"caller\": {\n      \"missing\": true\n   }\n}\n",
+		},
+		{
+			name:       "onMissingFile_file",
+			callerFile: "testdata/inFileConfigs/onMissingFile_file.jsonnet",
+			wantOnMissingFile: &onMissingFile{
+				enabled: true,
+				kind:    "file",
+				file:    "../simple/default.jsonnet",
+			},
+			want: "{\n   \"caller\": {\n      \"default\": true\n   }\n}\n",
+		},
+		{
+			name:       "onMissingFile_content_importstr",
+			callerFile: "testdata/inFileConfigs/onMissingFile_importstr.jsonnet",
+			wantOnMissingFile: &onMissingFile{
+				enabled: true,
+				kind:    "content",
+				content: "[]",
+			},
+			want: "{\n   \"caller_str\": \"[]\"\n}\n",
+		},
+		{
+			name:       "onMissingFile_content_multi",
+			callerFile: "testdata/inFileConfigs/onMissingFile_multi.jsonnet",
+			// NOTE: the only the last config setting will be seen at the end
+			wantOnMissingFile: &onMissingFile{
+				enabled: true,
+				kind:    "file",
+				file:    "../simple/default.jsonnet",
+			},
+			want: "{\n   \"caller\": [ ],\n   \"caller_file\": {\n      \"default\": true\n   },\n   \"caller_str\": \"{\\n  default: true,\\n}\\n\",\n   \"caller_str_file\": \"{\\n  default: true,\\n}\\n\"\n}\n",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -178,12 +247,16 @@ func TestMultiImporter_InFileConfigs(t *testing.T) {
 
 			vm := jsonnet.MakeVM()
 			vm.Importer(m)
-			_, err := vm.EvaluateFile(tt.callerFile)
+			got, err := vm.EvaluateFile(tt.callerFile)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("vm.EvaluateFile(%s) %v", tt.callerFile, err)
 				return
 			}
 			assert.Equal(t, tt.wantLogLevel, m.logLevel)
+			assert.Equal(t, tt.wantOnMissingFile, m.onMissingFile)
+			if len(tt.want) > 0 {
+				assert.Equal(t, tt.want, got)
+			}
 			if len(tt.wantGraph) > 0 {
 				cnt, err := afero.ReadFile(fs, m.importGraphFile)
 				if err != nil {
@@ -690,8 +763,6 @@ func TestMultiImporter_Behavior(t *testing.T) {
 			m := NewMultiImporter(g, NewFallbackFileImporter())
 			m.Logger(logger)
 
-			// _, file := filepath.Split(tt.callerFile)
-			// m.SetImportGraphFile(fmt.Sprintf("%s.gv", file))
 			vm := jsonnet.MakeVM()
 			vm.Importer(m)
 			got, err := vm.EvaluateFile(tt.callerFile)
@@ -702,6 +773,53 @@ func TestMultiImporter_Behavior(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestMultiImporter_OnMissingFileBehavior(t *testing.T) {
+
+	tests := []struct {
+		name          string
+		onMissingFile string
+		want          string
+		wantErr       bool
+	}{
+		{
+			name:          "ignore missing file and return content",
+			onMissingFile: "'{}'",
+			want:          "{ }\n",
+			wantErr:       false,
+		},
+		{
+			name:          "ignore missing file and return file content",
+			onMissingFile: "testdata/simple/default.jsonnet",
+			want:          "{\n   \"default\": true\n}\n",
+			wantErr:       false,
+		},
+		{
+			name:          "empty string error file not found",
+			onMissingFile: "",
+			want:          "",
+			wantErr:       true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewGlobImporter()
+			m := NewMultiImporter(g, NewFallbackFileImporter())
+			m.OnMissingFile(tt.onMissingFile)
+
+			vm := jsonnet.MakeVM()
+			vm.Importer(m)
+			got, err := vm.EvaluateFile("missing.file")
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("vm.EvaluateFile(%s) %v", tt.onMissingFile, err)
+				return
+			}
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
 }
 
 var excpectedComplexOutput = `{
