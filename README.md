@@ -71,11 +71,11 @@ same as before but in addition with the `<query-parameter>` `exclude=**/*ignore.
 </details>
 
 
-### List of available custom importers and the supported prefixa
+### List of available custom importers with the supported prefixa and available query-parameters
 
 | Name            | `<importer-prefix>` in `import` path  | `<importer-prefix>` in `importstr` path      | `<query-parameters>`                               |
 | ----            | ---                                   | ---                                          | -----                                              |
-| `MultiImporter` | any - will address the right importer | any                                          | `logLevel=<info\|debug>`, `importGraph=<filepath>` |
+| `MultiImporter` | any - will address the right importer | any                                          | `logLevel=<info\|debug>`, `importGraph=<filepath>`, `onMissingFile=<filepath\|content>` |
 | `GlobImporter`  | `glob.<?>`, `glob.<?>+`, `glob+`      | `glob-str.<?>`, `glob-str.<?>+`, `glob-str+` | `logLevel=<info\|debug>`, `exclude=<glob-pattern>` |
 
 ---
@@ -228,7 +228,11 @@ Code which will be evaluated in jsonnet:
 
 ### Logging
 
-Enable/add a [zap.Logger](https://github.com/uber-go/zap) via `<Importer>.Logger()` **per importer** or just use the this method on the `MultiImporter` instance to enable this of all underlying custom importers:
+Enable/add a [zap.Logger](https://github.com/uber-go/zap) via `<Importer>.Logger()` **per importer** or just use the this method on the `MultiImporter` instance to enable this of all underlying custom importers.
+
+
+<details>
+  <summary><h4>details</h4></summary>
 
 ```go
 import (
@@ -253,9 +257,17 @@ local myother_imports = importers + (import 'somethingElse.jsonnet');
 ...
 ```
 
+</details>
+
+
 ### Aliases
 
-Add an alias for an importer prefix, like:
+Add an alias for an importer prefix.
+
+
+<details>
+  <summary><h4>details</h4></summary>
+
 ```go
  g := NewGlobImporter()
  if err := g.SetAliasPrefix("glob", "glob.stem+"); err != nil {
@@ -266,10 +278,17 @@ Add an alias for an importer prefix, like:
 
 The `SetAliasPrefix()` can be used multiple times, whereby only the last setting for an alias-prefix pair will be used.
 
+</details>
+
+
 ### Import Graph
 
 The `MultiImporter` can detect [import cycles](https://en.wikipedia.org/wiki/Circular_dependency)
 and creates an *import graph* in [dot](https://www.graphviz.org/documentation/) format once it found a cycle.
+
+
+<details>
+  <summary><h4>details</h4></summary>
 
 In addition such *import graphs* can also be enable independently via the special *config* import inside an `jsonnet` file:
 
@@ -288,9 +307,14 @@ Example image from [testdata/inFileConfigs/importGraph.jsonnet](testdata/inFileC
 
 > the image was created via `dot -Tsvg -O graph.gv` command (ref. [graphviz cli tool](https://graphviz.org/doc/info/command.html))
 
+</details>
+
 ### Ignore Import Cycles
 
-To disable the tests and therefore any error handling for *import cycles*, you can use the following config in your *jsonnet* code:
+To disable the tests and therefore any error handling for *import cycles*, you can use the following config in your *jsonnet* code.
+
+<details>
+  <summary><h4>details</h4></summary>
 
 ```jsonnet
 // set the import graph file name
@@ -307,6 +331,50 @@ Or directly in your go code via:
  m := NewMultiImporter(g)
  m.IgnoreImportCycles()
 ```
+
+</details>
+
+### Handling Of Missing Files
+
+**(new in v0.0.6-alpha)** (see #9)
+
+With that option you can specify a fallback to another file or a concrete content/string, if the file in the import couldn't be found.
+
+<details>
+  <summary><h4>details</h4></summary>
+
+#### Inside the **jsonnet** code - with content:
+
+```jsonnet
+// set a predefined file content
+local importers = import 'config://set?onMissingFile="{}"';
+local myother_imports = importers + (import 'possiblyMissingFile.jsonnet');
+```
+
+#### Inside the **jsonnet** code - with a different file:
+
+```jsonnet
+// set a replacement file
+local importers = import 'config://set?onMissingFile=default.jsonnet';
+local myother_imports = importers + (import 'possiblyMissingFile.jsonnet');
+```
+
+#### Inside the **go** code - with content:
+
+```go
+m := NewMultiImporter()
+m.OnMissingFile("'{}'") // single qoutes marks a content
+```
+#### Inside the **go** code - with a different file:
+
+```go
+m := NewMultiImporter()
+m.OnMissingFile('default.jsonnet')
+```
+
+> A more complex example can also be found in [testdata/inFileConfigs/onMissingFile_multi.jsonnet](testdata/inFileConfigs/onMissingFile_multi.jsonnet)
+
+</details>
 
 
 ## Dependencies

@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/dominikbraun/graph"
 	"github.com/dominikbraun/graph/draw"
@@ -72,6 +74,13 @@ type (
 		importGraphFile    string
 		enableImportGraph  bool
 		fs                 afero.Fs
+		*onMissingFile
+	}
+	onMissingFile struct {
+		enabled bool
+		kind    string
+		file    string
+		content string
 	}
 )
 
@@ -112,7 +121,9 @@ func NewMultiImporter(importers ...Importer) *MultiImporter {
 		ignoreImportCycles: false,
 		importCounter:      0,
 		enableImportGraph:  false,
+		onMissingFile:      nil,
 	}
+
 	if len(multiImporter.importers) == 0 {
 		multiImporter.importers = []Importer{
 			NewGlobImporter(),
@@ -145,6 +156,27 @@ func (m *MultiImporter) IgnoreImportCycles() {
 	m.ignoreImportCycles = true
 }
 
+// OnMissingFile specifies the content or the file which should be used if the
+// original import cannot find the file.
+func (m *MultiImporter) OnMissingFile(use string) {
+	if use == "" {
+		return
+	}
+	o := &onMissingFile{
+		enabled: true,
+		kind:    "file",
+		file:    use,
+	}
+
+	isString := strings.HasPrefix(use, "'") && strings.HasSuffix(use, "'")
+	if isString {
+		o.kind = "content"
+		o.content = use[1 : len(use)-1]
+		o.file = ""
+	}
+	m.onMissingFile = o
+}
+
 // Import is used by go-jsonnet to run this importer. It implements the go-jsonnet
 // Importer interface method.
 func (m *MultiImporter) Import(importedFrom, importedPath string) (jsonnet.Contents, string, error) {
@@ -158,12 +190,14 @@ func (m *MultiImporter) Import(importedFrom, importedPath string) (jsonnet.Conte
 	if err != nil {
 		return jsonnet.MakeContents(""), "", err
 	}
-
+	p := strings.Repeat("./", m.importCounter)
+	foundAtCntr := p + "./" + importedFrom
 	if prefix == "config" {
-		return jsonnet.MakeContents("{}"), "", nil
+		return jsonnet.MakeContents("{}"), foundAtCntr, nil
 	}
 
-	for _, importer := range m.importers {
+	for idx, importer := range m.importers {
+		m.importCounter += idx
 		if importer.CanHandle(prefix) {
 			logger.Info("found importer for importedPath",
 				zap.String("importer", fmt.Sprintf("%T", importer)),
@@ -174,6 +208,24 @@ func (m *MultiImporter) Import(importedFrom, importedPath string) (jsonnet.Conte
 
 			contents, foundAt, err := importer.Import(importedFrom, importedPath)
 			if err != nil {
+				switch {
+				case errors.Is(err, ErrEmptyResult),
+					strings.Contains(err.Error(), "no match locally or in the Jsonnet library paths"):
+					o := m.onMissingFile
+					if o != nil {
+						if o.enabled {
+							switch o.kind {
+							case "content":
+
+								return jsonnet.MakeContents(o.content), foundAtCntr + foundAt, nil
+							case "file":
+
+								return importer.Import(foundAt, path.Join(path.Dir(importedFrom), o.file))
+							}
+						}
+					}
+				}
+
 				return jsonnet.MakeContents(""), "",
 					fmt.Errorf("custom importer '%T' returns error: %w", importer, err)
 			}
@@ -194,7 +246,7 @@ func (m *MultiImporter) Import(importedFrom, importedPath string) (jsonnet.Conte
 func (m *MultiImporter) parseImportString(importedFrom, importedPath string) (string, error) {
 	parsedURL, err := url.Parse(importedPath)
 	if err != nil {
-		return "", fmt.Errorf("%w: '%s', error: %s", ErrMalformedImport, importedPath, err)
+		return "", fmt.Errorf("%w: '%s', error: %w", ErrMalformedImport, importedPath, err)
 	}
 
 	prefix := parsedURL.Scheme
@@ -294,6 +346,22 @@ func (m *MultiImporter) parseInFileConfigs(rawQuery string) error {
 
 	if _, exists := query["ignoreImportCycles"]; exists {
 		m.ignoreImportCycles = true
+	}
+
+	if use, exists := query["onMissingFile"]; exists && use[0] != "" {
+		o := &onMissingFile{
+			enabled: true,
+			kind:    "file",
+			file:    use[0],
+		}
+
+		isString := strings.HasPrefix(use[0], `"`) && strings.HasSuffix(use[0], `"`)
+		if isString {
+			o.kind = "content"
+			o.content = use[0][1 : len(use[0])-1]
+			o.file = ""
+		}
+		m.onMissingFile = o
 	}
 
 	if level, exists := query["logLevel"]; exists {

@@ -369,7 +369,7 @@ func (g *GlobImporter) parse(importedPath string) (string, string, error) {
 	parsedURL, err := url.Parse(importedPath)
 	if err != nil {
 		return "", "",
-			fmt.Errorf("%w: cannot parse import '%s', error: %s",
+			fmt.Errorf("%w: cannot parse import '%s', error: %w",
 				ErrMalformedGlobPattern, importedPath, err)
 	}
 
@@ -379,7 +379,7 @@ func (g *GlobImporter) parse(importedPath string) (string, string, error) {
 	query, err := url.ParseQuery(parsedURL.RawQuery)
 	if err != nil {
 		return "", "",
-			fmt.Errorf("%w: cannot parse the query inside the import '%s', error: %s",
+			fmt.Errorf("%w: cannot parse the query inside the import '%s', error: %w",
 				ErrMalformedGlobPattern, importedPath, err)
 	}
 
