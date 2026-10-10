@@ -83,6 +83,11 @@ func (y *YamlImporter) reset() {
 	y.contents = make(map[string]jsonnet.Contents)
 }
 
+// Reset clears cached YAML imports and import-cycle state.
+func (y *YamlImporter) Reset() {
+	y.reset()
+}
+
 // ImportsKey sets the key in the YAML files, which lists the imports.
 func (y *YamlImporter) ImportsKey(key string) {
 	if key != "" {
