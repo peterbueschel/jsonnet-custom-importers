@@ -1,0 +1,1 @@
+import 'yaml://mixed.yaml'

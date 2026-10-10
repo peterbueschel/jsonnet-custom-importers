@@ -1,0 +1,1 @@
+{ fromJsonnet: true, shared: 'jsonnet' }
