@@ -405,3 +405,60 @@ func TestGlobImporter_handle(t *testing.T) {
 		})
 	}
 }
+
+func TestGlobImporter_Import_optional(t *testing.T) {
+	prefixa := []string{
+		"glob+", "glob-str+", "glob.path", "glob.file", "glob.dir", "glob.stem",
+		"glob.path+", "glob.file+", "glob.dir+", "glob.stem+", "glob-str.stem",
+	}
+
+	tests := []struct {
+		name    string
+		query   string
+		pattern string
+		wantErr bool
+	}{
+		{name: "optional and no match returns empty object", query: "?optional=true", pattern: "*.libsonnet"},
+		{name: "optional and exclude removes all returns empty object", query: "?optional=true&exclude=**/*.jsonnet", pattern: "*.jsonnet"},
+		{name: "strict and no match returns error", query: "", pattern: "*.libsonnet", wantErr: true},
+		{name: "optional=false and no match returns error", query: "?optional=false", pattern: "*.libsonnet", wantErr: true},
+		{name: "strict and exclude removes all returns error", query: "?exclude=**/*.jsonnet", pattern: "*.jsonnet", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		for _, prefix := range prefixa {
+			t.Run(tt.name+"/"+prefix, func(t *testing.T) {
+				g := NewGlobImporter()
+				g.Logger(zap.New(nil))
+
+				fs := afero.NewMemMapFs()
+				assert.NoError(t, afero.WriteFile(fs, "a.jsonnet", []byte("{a: 1}"), 0o644))
+				g.fs = fs
+
+				got, _, err := g.Import("", prefix+"://"+tt.pattern+tt.query)
+				if tt.wantErr {
+					assert.ErrorIs(t, err, ErrEmptyResult)
+					return
+				}
+
+				assert.NoError(t, err)
+				assert.Equal(t, jsonnet.MakeContents("{}"), got)
+			})
+		}
+	}
+}
+
+func TestGlobImporter_Import_optionalDoesNotLeak(t *testing.T) {
+	g := NewGlobImporter()
+	g.Logger(zap.New(nil))
+
+	fs := afero.NewMemMapFs()
+	assert.NoError(t, afero.WriteFile(fs, "a.jsonnet", []byte("{a: 1}"), 0o644))
+	g.fs = fs
+
+	_, _, err := g.Import("", "glob+://*.libsonnet?optional=true")
+	assert.NoError(t, err)
+
+	_, _, err = g.Import("", "glob+://*.libsonnet")
+	assert.ErrorIs(t, err, ErrEmptyResult)
+}

@@ -55,6 +55,9 @@ type (
 		// excludePattern is used in the GlobImporter to ignore files matching
 		// the given pattern in '.gitIgnore' .
 		excludePattern string
+		// optional is set via the query parameter optional=true and returns an
+		// empty object instead of ErrEmptyResult if nothing matches.
+		optional bool
 		// yaml is true, if a YamlImporter is registered in the MultiImporter.
 		yaml bool
 	}
@@ -346,6 +349,10 @@ func (g *GlobImporter) resolveFilesFrom(searchPaths []string, cwd, pattern strin
 	resolvedFiles = append(resolvedFiles, matches...)
 
 	if len(resolvedFiles) == 0 {
+		if g.optional {
+			return []string{}, nil
+		}
+
 		return []string{},
 			fmt.Errorf("%w for the glob pattern '%s'", ErrEmptyResult, pattern)
 	}
@@ -372,6 +379,10 @@ func (g *GlobImporter) removeExcludesFrom(files []string, pattern string) ([]str
 	}
 
 	if len(keep) == 0 {
+		if g.optional {
+			return []string{}, nil
+		}
+
 		return []string{},
 			fmt.Errorf(
 				"%w, exclude pattern '%s' removed all matches for the glob pattern '%s'",
@@ -403,6 +414,11 @@ func (g *GlobImporter) parse(importedPath string) (string, string, error) {
 		g.excludePattern = excludePattern[0]
 	}
 
+	g.optional = false
+	if optional, exists := query["optional"]; exists {
+		g.optional = optional[0] == "true"
+	}
+
 	return prefix, pattern, nil
 }
 
@@ -427,6 +443,10 @@ func allowedFiles(files []string, ignoreFile string) []string {
 // handle runs the logic behind the different glob prefixa and returns based on
 // the prefix the import string.
 func (g GlobImporter) handle(files []string, prefix string) (string, error) {
+	if g.optional && len(files) == 0 {
+		return "{}", nil
+	}
+
 	resolvedFiles := newOrderedMap()
 
 	// handle import or importstr

@@ -76,7 +76,7 @@ same as before but in addition with the `<query-parameter>` `exclude=**/*ignore.
 | Name            | `<importer-prefix>` in `import` path  | `<importer-prefix>` in `importstr` path      | `<query-parameters>`                               |
 | ----            | ---                                   | ---                                          | -----                                              |
 | `MultiImporter` | any - will address the right importer | any                                          | `logLevel=<info\|debug>`, `importGraph=<filepath>`, `onMissingFile=<filepath\|content>` |
-| `GlobImporter`  | `glob.<?>`, `glob.<?>+`, `glob+`      | `glob-str.<?>`, `glob-str.<?>+`, `glob-str+` | `logLevel=<info\|debug>`, `exclude=<glob-pattern>` |
+| `GlobImporter`  | `glob.<?>`, `glob.<?>+`, `glob+`      | `glob-str.<?>`, `glob-str.<?>+`, `glob-str+` | `logLevel=<info\|debug>`, `exclude=<glob-pattern>`, `optional=true` |
 | `YamlImporter`  | `yaml`                                | -                                            | -                                                  |
 
 ---
@@ -95,6 +95,7 @@ same as before but in addition with the `<query-parameter>` `exclude=**/*ignore.
 - Is a custom importer, which:
 	- **Imports multiple files at once** via [glob patterns](https://en.wikipedia.org/wiki/Glob_(programming)) handled by the [doublestar](https://github.com/bmatcuk/doublestar) library.
 	- Supports **Continuous** imports: If inside the resolved files other glob-patterns will be found, the *GlobImporter* will also take these *glob-imports* and resolves the underlying files.
+	- Can be **optional**: use `optional=true` as query parameter to get an empty object `{}` instead of an error, if nothing matches (or `exclude` removes everything).
 	- Can **Exclude** imports: use `exclude=<glob pattern>` as query parameter to exclude files from further handlings.
     - Supports extra **JPaths**: extra search paths for additional libraries. (⚠️ matches of library paths have a lower priority then matches in the current work dir)
     - **Sorts** the resolved files: in lexicographical and hierarchical order. Example: `[a0 b02 a0/b/c a1 d/x c b2 a1/b b10]` becomes `[a0 a0/b/c a1 a1/b b02 b10 b2 c d/x]` 
