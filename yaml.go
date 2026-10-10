@@ -52,6 +52,7 @@ type (
 		deps graph.Graph[string, string]
 		// files maps the foundAt values to the resolved files.
 		files         map[string]string
+		contents      map[string]jsonnet.Contents
 		importCounter int
 		// shared is the import graph of the MultiImporter.
 		shared graph.Graph[string, string]
@@ -77,6 +78,7 @@ func NewYamlImporter(jpaths ...string) *YamlImporter {
 func (y *YamlImporter) reset() {
 	y.deps = graph.New(graph.StringHash, graph.Directed())
 	y.files = make(map[string]string)
+	y.contents = make(map[string]jsonnet.Contents)
 }
 
 // ImportsKey sets the key in the YAML files, which lists the imports.
@@ -180,10 +182,15 @@ func (y *YamlImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 	}
 
 	y.files[foundAt] = file
+	if cached, ok := y.contents[foundAt]; ok {
+		return cached, foundAt, nil
+	}
 
+	contents := jsonnet.MakeContents(code)
+	y.contents[foundAt] = contents
 	logger.Debug("returns", zap.String("contents", code), zap.String("foundAt", foundAt))
 
-	return jsonnet.MakeContents(code), foundAt, nil
+	return contents, foundAt, nil
 }
 
 // addSharedEdge mirrors the import of a YAML file into the import graph of the

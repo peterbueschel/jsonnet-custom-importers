@@ -123,6 +123,19 @@ func TestYamlImporter_Contents(t *testing.T) {
 		c.String())
 }
 
+func TestYamlImporter_RepeatedImports(t *testing.T) {
+	y := NewYamlImporter("testdata/yaml")
+	vm := jsonnet.MakeVM()
+	vm.Importer(NewMultiImporter(y, NewGlobImporter(), NewFallbackFileImporter()))
+
+	got, err := vm.EvaluateAnonymousSnippet(
+		"caller.jsonnet",
+		"[import 'yaml://plain.yaml', import 'yaml://plain.yaml']",
+	)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"list":[1,2],"name":"plain"},{"list":[1,2],"name":"plain"}]`, got)
+}
+
 func TestYamlImporter_GlobMatches(t *testing.T) {
 	tests := []struct {
 		name string
