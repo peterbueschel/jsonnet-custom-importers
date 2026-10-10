@@ -147,6 +147,26 @@ func TestYamlImporter_RepeatedImports(t *testing.T) {
 	assert.JSONEq(t, `[{"list":[1,2],"name":"plain"},{"list":[1,2],"name":"plain"}]`, got)
 }
 
+func TestYamlImporter_Reset(t *testing.T) {
+	y := NewYamlImporter()
+	y.fs = afero.NewMemMapFs()
+	require.NoError(t, afero.WriteFile(y.fs, "doc.yaml", []byte("imports: [first.libsonnet]\n"), 0o600))
+
+	first, _, err := y.Import("", "yaml://doc.yaml")
+	require.NoError(t, err)
+	assert.Contains(t, first.String(), "import 'first.libsonnet'")
+
+	require.NoError(t, afero.WriteFile(y.fs, "doc.yaml", []byte("imports: [second.libsonnet]\n"), 0o600))
+	cached, _, err := y.Import("", "yaml://doc.yaml")
+	require.NoError(t, err)
+	assert.Equal(t, first.String(), cached.String())
+
+	y.Reset()
+	updated, _, err := y.Import("", "yaml://doc.yaml")
+	require.NoError(t, err)
+	assert.Contains(t, updated.String(), "import 'second.libsonnet'")
+}
+
 func TestYamlImporter_GlobMatches(t *testing.T) {
 	tests := []struct {
 		name string
