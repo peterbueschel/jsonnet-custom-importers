@@ -19,7 +19,7 @@ const (
 	defaultYamlImports = "imports"
 	// defaultYamlWrapper merges the resolved imports (base) with the document,
 	// without the imports key itself.
-	defaultYamlWrapper = "function(base, doc, file) base + { [k]: doc[k] for k in std.objectFields(doc) if k != '%s' }"
+	defaultYamlWrapper = "function(base, doc, file) base + { [k]: doc[k] for k in std.objectFields(doc) if k != %s }"
 )
 
 type (
@@ -53,6 +53,8 @@ type (
 		// files maps the foundAt values to the resolved files.
 		files         map[string]string
 		importCounter int
+		// shared is the import graph of the MultiImporter.
+		shared graph.Graph[string, string]
 	}
 )
 
@@ -88,7 +90,8 @@ func (y *YamlImporter) Wrapper(expression string) {
 	y.wrapper = expression
 }
 
-func (y *YamlImporter) setImportGraph(_ graph.Graph[string, string], importCounter int) {
+func (y *YamlImporter) setImportGraph(importGraph graph.Graph[string, string], importCounter int) {
+	y.shared = importGraph
 	y.importCounter = importCounter
 }
 
@@ -101,7 +104,7 @@ func (y *YamlImporter) Logger(logger *zap.Logger) {
 
 // CanHandle returns true for the prefix `yaml`.
 func (y *YamlImporter) CanHandle(prefix string) bool {
-	return strings.HasPrefix(prefix, yamlPrefix)
+	return prefix == yamlPrefix
 }
 
 // Prefixa returns the list of supported prefixa for this importer.
@@ -143,28 +146,55 @@ func (y *YamlImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 	plain := fmt.Sprintf("std.parseYaml(importstr %s)", quote(base))
 	code := plain
 
-	if len(imports) > 0 {
+	foundAt := foundAt(file)
+	if y.shared != nil {
+		y.addSharedEdge(importedFrom, foundAt, importedPath)
+	}
+
+	wrapper := y.wrapper
+	if len(imports) > 0 || wrapper != "" {
 		exprs := make([]string, 0, len(imports))
 
 		for _, imp := range imports {
-			exprs = append(exprs, fmt.Sprintf("(import %s)", quote(y.toImport(file, imp))))
+			target := y.toImport(file, imp)
+			exprs = append(exprs, fmt.Sprintf("(import %s)", quote(target)))
 		}
 
-		wrapper := y.wrapper
 		if wrapper == "" {
-			wrapper = fmt.Sprintf(defaultYamlWrapper, y.key)
+			wrapper = fmt.Sprintf(defaultYamlWrapper, quote(y.key))
+		}
+
+		baseExpr := "{}"
+		if len(exprs) > 0 {
+			baseExpr = strings.Join(exprs, " + ")
 		}
 
 		code = fmt.Sprintf("(%s)(base = %s, doc = %s, file = %s)",
-			wrapper, strings.Join(exprs, " + "), plain, quote(base))
+			wrapper, baseExpr, plain, quote(base))
 	}
 
-	foundAt := foundAt(file)
 	y.files[foundAt] = file
 
 	logger.Debug("returns", zap.String("contents", code), zap.String("foundAt", foundAt))
 
 	return jsonnet.MakeContents(code), foundAt, nil
+}
+
+// addSharedEdge mirrors the import of a YAML file into the import graph of the
+// MultiImporter, where the YAML code is stored under its foundAt name.
+func (y *YamlImporter) addSharedEdge(importedFrom, found, importedPath string) {
+	from := filepath.Clean(importedFrom)
+	if importedFrom == "" {
+		from = importedPath
+	}
+
+	attrs := []func(*graph.VertexProperties){
+		graph.VertexAttribute("shape", "note"),
+		graph.VertexAttribute("label", found),
+	}
+	_ = y.shared.AddVertex(from)
+	_ = y.shared.AddVertex(found, attrs...)
+	_ = y.shared.AddEdge(from, found, graph.EdgeWeight(y.importCounter), graph.EdgeAttribute("label", importedPath))
 }
 
 // realPath returns the real file behind a foundAt value created by this importer.
