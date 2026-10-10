@@ -55,6 +55,8 @@ type (
 		// excludePattern is used in the GlobImporter to ignore files matching
 		// the given pattern in '.gitIgnore' .
 		excludePattern string
+		// yaml is true, if a YamlImporter is registered in the MultiImporter.
+		yaml bool
 	}
 
 	// orderedMap takes the glob.<?>:// and glob.<?>+:// results,
@@ -142,6 +144,20 @@ func NewGlobImporter(jpaths ...string) *GlobImporter {
 func (g *GlobImporter) setImportGraph(importGraph graph.Graph[string, string], importCounter int) {
 	g.importGraph = importGraph
 	g.importCounter = importCounter
+}
+
+func (g *GlobImporter) enableYaml() {
+	g.yaml = true
+}
+
+// importOf returns the import expression for the file. With a registered
+// YamlImporter, YAML files are imported via the yaml:// prefix.
+func (g GlobImporter) importOf(importKind, file string) string {
+	if g.yaml && importKind == "import" && isYamlFile(file) {
+		return fmt.Sprintf("(import '%s%s')", yamlScheme, file)
+	}
+
+	return fmt.Sprintf("(%s '%s')", importKind, file)
 }
 
 func (g *GlobImporter) Exclude(pattern string) {
@@ -431,8 +447,7 @@ func (g GlobImporter) handle(files []string, prefix string) (string, error) {
 		imports := make([]string, 0, len(files))
 
 		for _, f := range files {
-			i := fmt.Sprintf("(%s '%s')", importKind, f)
-			imports = append(imports, i)
+			imports = append(imports, g.importOf(importKind, f))
 		}
 
 		return strings.Join(imports, "+"), nil
@@ -440,26 +455,26 @@ func (g GlobImporter) handle(files []string, prefix string) (string, error) {
 		imports := make([]string, 0, len(files))
 
 		for _, f := range files {
-			imports = append(imports, fmt.Sprintf("'%s': (%s '%s'),", f, importKind, f))
+			imports = append(imports, fmt.Sprintf("'%s': %s,", f, g.importOf(importKind, f)))
 		}
 
 		return fmt.Sprintf("{\n%s\n}", strings.Join(imports, "\n")), nil
 	case "glob.stem", "glob.stem+":
 		for _, f := range files {
-			i := fmt.Sprintf("(%s '%s')", importKind, f)
+			i := g.importOf(importKind, f)
 			_, filename := filepath.Split(f)
 			stem, _, _ := strings.Cut(filename, ".")
 			resolvedFiles.add(stem, i, strings.HasSuffix(prefix, "+"))
 		}
 	case "glob.file", "glob.file+":
 		for _, f := range files {
-			i := fmt.Sprintf("(%s '%s')", importKind, f)
+			i := g.importOf(importKind, f)
 			_, filename := filepath.Split(f)
 			resolvedFiles.add(filename, i, strings.HasSuffix(prefix, "+"))
 		}
 	case "glob.dir", "glob.dir+":
 		for _, f := range files {
-			i := fmt.Sprintf("(%s '%s')", importKind, f)
+			i := g.importOf(importKind, f)
 			dir, _ := filepath.Split(f)
 			resolvedFiles.add(dir, i, strings.HasSuffix(prefix, "+"))
 		}

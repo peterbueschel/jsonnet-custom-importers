@@ -131,7 +131,31 @@ func NewMultiImporter(importers ...Importer) *MultiImporter {
 		}
 	}
 
+	multiImporter.enableYamlInGlobImporters()
+
 	return multiImporter
+}
+
+// enableYamlInGlobImporters tells the GlobImporters to use the yaml:// prefix
+// for YAML files, if a YamlImporter is registered.
+func (m *MultiImporter) enableYamlInGlobImporters() {
+	hasYaml := false
+
+	for _, i := range m.importers {
+		if _, ok := i.(*YamlImporter); ok {
+			hasYaml = true
+		}
+	}
+
+	if !hasYaml {
+		return
+	}
+
+	for _, i := range m.importers {
+		if g, ok := i.(*GlobImporter); ok {
+			g.enableYaml()
+		}
+	}
 }
 
 // Logger method can be used to set a zap.Logger for all importers at once.
