@@ -1,7 +1,9 @@
 package importer
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -265,6 +267,19 @@ func (y *YamlImporter) trackImport(importedFrom, file string) error {
 
 // importsOf returns the list under the imports key of a YAML document.
 func (y *YamlImporter) importsOf(data []byte, file string) ([]string, error) {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	var first yaml.Node
+	if err := decoder.Decode(&first); err != nil {
+		return nil, nil //nolint:nilerr
+	}
+	var second yaml.Node
+	if err := decoder.Decode(&second); err == nil {
+		return nil, fmt.Errorf("%w: multi-document YAML is not supported in '%s'",
+			ErrMalformedImport, file)
+	} else if err != io.EOF {
+		return nil, nil //nolint:nilerr
+	}
+
 	var doc map[string]any
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		// no mapping, so no imports. Syntax errors show up in std.parseYaml.
