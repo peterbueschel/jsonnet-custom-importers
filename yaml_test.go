@@ -81,7 +81,7 @@ func TestYamlImporter_Behavior(t *testing.T) {
 				y.Wrapper("function(base, doc, file) { base: base, file: file, doc: doc }")
 			},
 			want: `{"base":{"fromJsonnet":true,"shared":"jsonnet"},` +
-				`"doc":{"include":["base.libsonnet"],"x":1},"file":"custom.yaml"}`,
+				`"doc":{"include":["base.libsonnet"],"x":1},"file":"testdata/yaml/custom.yaml"}`,
 		},
 	}
 
@@ -124,7 +124,7 @@ func TestYamlImporter_Contents(t *testing.T) {
 	assert.Equal(t,
 		"(function(base, doc, file) base + { [k]: doc[k] for k in std.objectFields(doc) if k != 'imports' })("+
 			"base = (import 'base.libsonnet') + (import 'yaml://sub/child.yml') + (import 'yaml://lib.yaml'), "+
-			"doc = std.parseYaml(importstr 'mixed.yaml'), file = 'mixed.yaml')",
+			"doc = std.parseYaml(importstr 'mixed.yaml'), file = 'testdata/yaml/mixed.yaml')",
 		c.String())
 }
 
@@ -203,12 +203,12 @@ func TestYamlImporter_WrapperForPlainFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t,
 		"(function(base, doc, file) { base: base, doc: doc, file: file })("+
-			"base = {}, doc = std.parseYaml(importstr 'plain.yaml'), file = 'plain.yaml')",
+			"base = {}, doc = std.parseYaml(importstr 'plain.yaml'), file = 'testdata/yaml/plain.yaml')",
 		c.String())
 
 	got, err := evalYamlFile(y, "caller_plain.jsonnet")
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"base":{},"doc":{"list":[1,2],"name":"plain"},"file":"plain.yaml"}`, got)
+	assert.JSONEq(t, `{"base":{},"doc":{"list":[1,2],"name":"plain"},"file":"testdata/yaml/plain.yaml"}`, got)
 }
 
 func TestYamlImporter_QuotedImportsKey(t *testing.T) {
