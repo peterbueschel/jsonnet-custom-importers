@@ -121,3 +121,50 @@ func TestYamlImporter_Contents(t *testing.T) {
 			"doc = std.parseYaml(importstr 'mixed.yaml'), file = 'mixed.yaml')",
 		c.String())
 }
+
+func TestYamlImporter_GlobMatches(t *testing.T) {
+	tests := []struct {
+		name string
+		file string
+		want string
+	}{
+		{
+			name: "glob_plus_mixed_matches",
+			file: "caller_glob.jsonnet",
+			want: `{"a":1,"b":2,"c":3,"d":4,"fromJsonnet":true,"shared":"jsonnet"}`,
+		},
+		{
+			name: "glob_stem_mixed_matches",
+			file: "caller_glob_stem.jsonnet",
+			want: `{"a":{"a":1},"b":{"b":2},"c":{"c":3},"d":{"d":4,"fromJsonnet":true,"shared":"jsonnet"}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := evalYamlFile(NewYamlImporter(), tt.file)
+			require.NoError(t, err)
+			assert.JSONEq(t, tt.want, got)
+		})
+	}
+}
+
+func TestGlobImporter_handleYaml(t *testing.T) {
+	files := []string{"a.libsonnet", "b.yaml", "c.yml"}
+
+	g := NewGlobImporter()
+	got, err := g.handle(files, "glob+")
+	require.NoError(t, err)
+	assert.Equal(t, "(import 'a.libsonnet')+(import 'b.yaml')+(import 'c.yml')", got)
+
+	// registering a YamlImporter enables the yaml:// prefix for glob matches.
+	NewMultiImporter(NewYamlImporter(), g, NewFallbackFileImporter())
+
+	got, err = g.handle(files, "glob+")
+	require.NoError(t, err)
+	assert.Equal(t, "(import 'a.libsonnet')+(import 'yaml://b.yaml')+(import 'yaml://c.yml')", got)
+
+	got, err = g.handle(files, "glob-str+")
+	require.NoError(t, err)
+	assert.Equal(t, "(importstr 'a.libsonnet')+(importstr 'b.yaml')+(importstr 'c.yml')", got)
+}
