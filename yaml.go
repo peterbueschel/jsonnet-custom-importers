@@ -34,7 +34,7 @@ type (
 	//	(<wrapper>)(
 	//	  base = (import 'a.libsonnet') + (import 'yaml://b.yaml'),
 	//	  doc = std.parseYaml(importstr 'file.yaml'),
-	//	  file = 'file.yaml',
+	//	  file = '/project/file.yaml',
 	//	)
 	//
 	// The wrapper is a jsonnet function expression with the parameters base,
@@ -178,7 +178,7 @@ func (y *YamlImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 		}
 
 		code = fmt.Sprintf("(%s)(base = %s, doc = %s, file = %s)",
-			wrapper, baseExpr, plain, quote(base))
+			wrapper, baseExpr, plain, quote(file))
 	}
 
 	y.files[foundAt] = file
