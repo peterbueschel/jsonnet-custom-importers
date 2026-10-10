@@ -21,7 +21,7 @@ const (
 	defaultYamlImports = "imports"
 	// defaultYamlWrapper merges the resolved imports (base) with the document,
 	// without the imports key itself.
-	defaultYamlWrapper = "function(base, doc, file) base + { [k]: doc[k] for k in std.objectFields(doc) if k != %s }"
+	defaultYamlWrapper = "function(base, doc, file, refs={}) base + { [k]: doc[k] for k in std.objectFields(doc) if k != %s }"
 )
 
 type (
@@ -40,7 +40,7 @@ type (
 	//	)
 	//
 	// The wrapper is a jsonnet function expression with the parameters base,
-	// doc and file.
+	// doc and file. With FileRefs it also gets the parameter refs.
 	YamlImporter struct {
 		// JPaths stores extra search paths.
 		JPaths []string
@@ -49,6 +49,8 @@ type (
 		logger  *zap.Logger
 		key     string
 		wrapper string
+		// refPath locates file names in the document, e.g. project.components[].file.
+		refPath string
 
 		// deps tracks which file imports which, to detect cycles.
 		deps graph.Graph[string, string]
@@ -99,6 +101,17 @@ func (y *YamlImporter) ImportsKey(key string) {
 // base, doc and file for YAML files with imports.
 func (y *YamlImporter) Wrapper(expression string) {
 	y.wrapper = expression
+}
+
+// FileRefs sets a path in the YAML documents, where file names are listed, e.g.
+// `project.components[].file`. A `[]` after a key walks over the list. The value
+// at the path is a string or a list of strings. Every entry is imported relative
+// to the YAML file (.yaml and .yml via `yaml://`) and the wrapper gets them as
+// the parameter `refs`, an object with one import per entry. The key is
+// `<file>::<entry>`, with file as given to the wrapper. A missing file returns an
+// error, which names the YAML file. The wrapper must accept the parameter refs.
+func (y *YamlImporter) FileRefs(path string) {
+	y.refPath = path
 }
 
 func (y *YamlImporter) setImportGraph(importGraph graph.Graph[string, string], importCounter int) {
@@ -157,6 +170,11 @@ func (y *YamlImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 		return empty, "", err
 	}
 
+	refs, err := y.refsOf(data, file)
+	if err != nil {
+		return empty, "", err
+	}
+
 	base := filepath.Base(file)
 	plain := fmt.Sprintf("std.parseYaml(importstr %s)", quote(base))
 	code := plain
@@ -167,7 +185,7 @@ func (y *YamlImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 	}
 
 	wrapper := y.wrapper
-	if len(imports) > 0 || wrapper != "" {
+	if len(imports) > 0 || len(refs) > 0 || wrapper != "" {
 		exprs := make([]string, 0, len(imports))
 
 		for _, imp := range imports {
@@ -184,8 +202,19 @@ func (y *YamlImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 			baseExpr = strings.Join(exprs, " + ")
 		}
 
-		code = fmt.Sprintf("(%s)(base = %s, doc = %s, file = %s)",
-			wrapper, baseExpr, plain, quote(file))
+		refsArg := ""
+
+		if len(refs) > 0 {
+			items := make([]string, 0, len(refs))
+			for _, r := range refs {
+				items = append(items, fmt.Sprintf("%s: (import %s)", quote(file+"::"+r), quote(y.toImport(file, r))))
+			}
+
+			refsArg = ", refs = { " + strings.Join(items, ", ") + " }"
+		}
+
+		code = fmt.Sprintf("(%s)(base = %s, doc = %s, file = %s%s)",
+			wrapper, baseExpr, plain, quote(file), refsArg)
 	}
 
 	y.files[foundAt] = file
@@ -315,6 +344,87 @@ func (y *YamlImporter) importsOf(data []byte, file string) ([]string, error) {
 	}
 
 	return imports, nil
+}
+
+// refsOf returns the distinct entries found at the refPath of a YAML document.
+// An entry without a scheme must exist, else the error names the YAML file.
+func (y *YamlImporter) refsOf(data []byte, file string) ([]string, error) {
+	if y.refPath == "" {
+		return nil, nil
+	}
+
+	var doc any
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, nil //nolint:nilerr
+	}
+
+	var refs []string
+
+	seen := map[string]bool{}
+
+	for _, e := range walkRefs(doc, strings.Split(y.refPath, ".")) {
+		if seen[e] {
+			continue
+		}
+
+		seen[e] = true
+
+		if !strings.Contains(e, "://") || strings.HasPrefix(e, yamlScheme) {
+			if _, err := y.find(filepath.Dir(file), strings.TrimPrefix(e, yamlScheme)); err != nil {
+				return nil, fmt.Errorf("file '%s' referenced in '%s': %w", e, file, err)
+			}
+		}
+
+		refs = append(refs, e)
+	}
+
+	return refs, nil
+}
+
+// walkRefs follows the path segments and returns the strings at the end.
+func walkRefs(node any, segs []string) []string {
+	if len(segs) == 0 {
+		switch v := node.(type) {
+		case string:
+			return []string{v}
+		case []any:
+			out := []string{}
+
+			for _, item := range v {
+				if s, ok := item.(string); ok && s != "" {
+					out = append(out, s)
+				}
+			}
+
+			return out
+		}
+
+		return nil
+	}
+
+	m, ok := node.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	name, isList := strings.CutSuffix(segs[0], "[]")
+	next := m[name]
+
+	if !isList {
+		return walkRefs(next, segs[1:])
+	}
+
+	list, ok := next.([]any)
+	if !ok {
+		return nil
+	}
+
+	out := []string{}
+	for _, item := range list {
+		out = append(out, walkRefs(item, segs[1:])...)
+	}
+
+	return out
 }
 
 // toImport converts YAML/YML entries into yaml:// imports and keeps the rest.

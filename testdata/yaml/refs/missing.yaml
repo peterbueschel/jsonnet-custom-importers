@@ -1,0 +1,4 @@
+project:
+  components:
+    - name: x
+      file: nothere.yaml

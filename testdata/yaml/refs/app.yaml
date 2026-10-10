@@ -1,0 +1,10 @@
+project:
+  components:
+    - name: a
+      file: [a.yaml, b.jsonnet]
+    - name: b
+      file: sub/c.yml
+    - name: c
+      file: a.yaml
+    - name: d
+      file: glob+://sub/*.yml

@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -128,7 +129,7 @@ func TestYamlImporter_Contents(t *testing.T) {
 	c, _, err = y.Import("testdata/yaml/x.jsonnet", "yaml://mixed.yaml")
 	require.NoError(t, err)
 	assert.Equal(t,
-		"(function(base, doc, file) base + { [k]: doc[k] for k in std.objectFields(doc) if k != 'imports' })("+
+		"(function(base, doc, file, refs={}) base + { [k]: doc[k] for k in std.objectFields(doc) if k != 'imports' })("+
 			"base = (import 'base.libsonnet') + (import 'yaml://sub/child.yml') + (import 'yaml://lib.yaml'), "+
 			"doc = std.parseYaml(importstr 'mixed.yaml'), file = 'testdata/yaml/mixed.yaml')",
 		c.String())
@@ -315,4 +316,57 @@ func TestYamlImporter_IgnoreImportCycles(t *testing.T) {
 			assert.JSONEq(t, `{"a":1,"imports":["b.yaml"]}`, got)
 		})
 	}
+}
+
+func TestYamlImporter_FileRefs(t *testing.T) {
+	newImporter := func() *YamlImporter {
+		y := NewYamlImporter()
+		y.FileRefs("project.components[].file")
+		y.Wrapper("function(base, doc, file, refs={}) { file: file, refs: refs }")
+
+		return y
+	}
+
+	t.Run("entries_relative_to_the_yaml_file", func(t *testing.T) {
+		got, err := evalYamlFile(newImporter(), "caller_refs.jsonnet")
+		require.NoError(t, err)
+
+		var out struct {
+			File string
+			Refs map[string]struct{ File string }
+		}
+		require.NoError(t, json.Unmarshal([]byte(got), &out))
+
+		p := "testdata/yaml/refs/"
+		assert.Equal(t, p+"app.yaml", out.File)
+		assert.Equal(t, map[string]struct{ File string }{
+			p + "app.yaml::a.yaml":            {p + "a.yaml"},
+			p + "app.yaml::b.jsonnet":         {""},
+			p + "app.yaml::sub/c.yml":         {p + "sub/c.yml"},
+			p + "app.yaml::glob+://sub/*.yml": {p + "sub/c.yml"},
+		}, out.Refs)
+	})
+
+	t.Run("code", func(t *testing.T) {
+		c, _, err := newImporter().Import("testdata/yaml/x.jsonnet", "yaml://refs/app.yaml")
+		require.NoError(t, err)
+		assert.Contains(t, c.String(), "refs = { 'testdata/yaml/refs/app.yaml::a.yaml': (import 'yaml://a.yaml'), "+
+			"'testdata/yaml/refs/app.yaml::b.jsonnet': (import 'b.jsonnet'), ")
+	})
+
+	t.Run("missing_file_names_the_yaml_file", func(t *testing.T) {
+		_, err := evalYamlFile(newImporter(), "caller_refs_missing.jsonnet")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "nothere.yaml")
+		assert.Contains(t, err.Error(), "testdata/yaml/refs/missing.yaml")
+	})
+
+	t.Run("not_set", func(t *testing.T) {
+		y := NewYamlImporter()
+		y.Wrapper("function(base, doc, file) file")
+
+		got, err := evalYamlFile(y, "caller_refs.jsonnet")
+		require.NoError(t, err)
+		assert.JSONEq(t, `"testdata/yaml/refs/app.yaml"`, got)
+	})
 }
