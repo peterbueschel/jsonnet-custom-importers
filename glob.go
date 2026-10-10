@@ -53,12 +53,10 @@ type (
 		// used in the CanHandle() and to store a possible alias.
 		prefixa map[string]string
 		aliases map[string]string
-		// excludePattern is used in the GlobImporter to ignore files matching
-		// the given pattern in '.gitIgnore' .
+		// excludePattern and optional hold per-import state; updating them makes
+		// a GlobImporter unsafe for concurrent use.
 		excludePattern string
-		// optional is set via the query parameter optional=true and returns an
-		// empty object instead of ErrEmptyResult if nothing matches.
-		optional bool
+		optional       bool
 		// yaml is true, if a YamlImporter is registered in the MultiImporter.
 		yaml bool
 	}
