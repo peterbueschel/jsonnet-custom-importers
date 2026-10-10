@@ -298,16 +298,13 @@ func (y *YamlImporter) importsOf(data []byte, file string) ([]string, error) {
 }
 
 // toImport converts YAML/YML entries into yaml:// imports and keeps the rest.
-// It also records the edges of the imported jsonnet files.
 func (y *YamlImporter) toImport(file, entry string) string {
-	if isYamlFile(entry) {
-		return yamlScheme + strings.TrimPrefix(entry, yamlScheme)
+	if strings.Contains(entry, "://") && !strings.HasPrefix(entry, yamlScheme) {
+		return entry
 	}
 
-	if !strings.Contains(entry, "://") {
-		dep := filepath.Join(filepath.Dir(file), entry)
-		_ = y.deps.AddVertex(dep)
-		_ = y.deps.AddEdge(file, dep)
+	if isYamlFile(entry) {
+		return yamlScheme + strings.TrimPrefix(entry, yamlScheme)
 	}
 
 	return entry
