@@ -11,6 +11,16 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+func TestGlobImporterPathDuplicateMatches(t *testing.T) {
+	for _, prefix := range []string{"glob.path", "glob.path+"} {
+		t.Run(prefix, func(t *testing.T) {
+			got, err := NewGlobImporter().handle([]string{"a.yaml", "a.yaml"}, prefix)
+			assert.NoError(t, err)
+			assert.Equal(t, "{\n'a.yaml': (import 'a.yaml'),\n}", got)
+		})
+	}
+}
+
 func TestGlobImporter_resolveFilesFrom(t *testing.T) {
 	type fields struct {
 		excludePattern string

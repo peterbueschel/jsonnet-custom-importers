@@ -475,13 +475,9 @@ func (g GlobImporter) handle(files []string, prefix string) (string, error) {
 
 		return strings.Join(imports, "+"), nil
 	case "glob.path", "glob.path+":
-		imports := make([]string, 0, len(files))
-
 		for _, f := range files {
-			imports = append(imports, fmt.Sprintf("'%s': %s,", f, g.importOf(importKind, f)))
+			resolvedFiles.add(f, g.importOf(importKind, f), false)
 		}
-
-		return fmt.Sprintf("{\n%s\n}", strings.Join(imports, "\n")), nil
 	case "glob.stem", "glob.stem+":
 		for _, f := range files {
 			i := g.importOf(importKind, f)
