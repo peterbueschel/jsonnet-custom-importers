@@ -77,6 +77,7 @@ same as before but in addition with the `<query-parameter>` `exclude=**/*ignore.
 | ----            | ---                                   | ---                                          | -----                                              |
 | `MultiImporter` | any - will address the right importer | any                                          | `logLevel=<info\|debug>`, `importGraph=<filepath>`, `onMissingFile=<filepath\|content>` |
 | `GlobImporter`  | `glob.<?>`, `glob.<?>+`, `glob+`      | `glob-str.<?>`, `glob-str.<?>+`, `glob-str+` | `logLevel=<info\|debug>`, `exclude=<glob-pattern>` |
+| `YamlImporter`  | `yaml`                                | -                                            | -                                                  |
 
 ---
 
@@ -223,6 +224,55 @@ Code which will be evaluated in jsonnet:
 
 </details>
 
+
+## YamlImporter
+
+- Is a custom importer, which imports YAML files via the prefix `yaml://` and returns them as jsonnet, using `std.parseYaml(importstr '<file>')`.
+- YAML files can list other files under a key (default: `imports`):
+  - entries ending with `.yaml` or `.yml` are imported via `yaml://`.
+  - all other entries stay normal jsonnet imports.
+  - entries are relative to the YAML file or found in the JPaths.
+  - import cycles are detected and return an error.
+- Add it to the *MultiImporter*:
+
+``` go
+  y := NewYamlImporter(jpaths...)
+  m := NewMultiImporter(y, NewGlobImporter(), NewFallbackFileImporter())
+```
+
+- With a registered *YamlImporter*, the *GlobImporter* imports matches with `.yaml` or `.yml` via `yaml://`. (`glob-str` still uses `importstr`)
+
+### Example
+
+`config.yaml`:
+
+```yaml
+imports:
+  - base.libsonnet
+  - other.yml
+name: config
+```
+
+`import 'yaml://config.yaml'` becomes:
+
+```jsonnet
+(<wrapper>)(
+  base = (import 'base.libsonnet') + (import 'yaml://other.yml'),
+  doc = std.parseYaml(importstr 'config.yaml'),
+  file = 'config.yaml',
+)
+```
+
+A file without imports becomes `std.parseYaml(importstr 'config.yaml')`.
+
+### Options
+
+- `y.ImportsKey("<key>")` changes the key with the imports. Default: `imports`.
+- `y.Wrapper("<expression>")` sets the jsonnet function with the parameters `base`, `doc` and `file`. The default merges `base` with `doc` and removes the imports key from `doc`:
+
+```jsonnet
+function(base, doc, file) base + { [k]: doc[k] for k in std.objectFields(doc) if k != 'imports' }
+```
 
 ## Options
 
