@@ -69,6 +69,11 @@ func TestYamlImporter_Behavior(t *testing.T) {
 			errText: "no match locally or in the Jsonnet library paths",
 		},
 		{
+			name: "glob_imports",
+			file: "caller_glob_imports.jsonnet",
+			want: `{"fromLibsonnet":true,"yamlA":1,"yamlB":2}`,
+		},
+		{
 			name: "custom_key_and_wrapper",
 			file: "caller_custom.jsonnet",
 			setup: func(y *YamlImporter) {
@@ -161,6 +166,13 @@ func TestYamlImporter_GlobMatches(t *testing.T) {
 			assert.JSONEq(t, tt.want, got)
 		})
 	}
+}
+
+func TestYamlImporter_ToImport(t *testing.T) {
+	y := NewYamlImporter()
+	assert.Equal(t, "glob+://sub/*.yaml", y.toImport("project.yaml", "glob+://sub/*.yaml"))
+	assert.Equal(t, "glob+://sub/*.libsonnet", y.toImport("project.yaml", "glob+://sub/*.libsonnet"))
+	assert.Equal(t, "yaml://sub/file.yaml", y.toImport("project.yaml", "sub/file.yaml"))
 }
 
 func TestGlobImporter_handleYaml(t *testing.T) {
