@@ -69,6 +69,12 @@ func TestYamlImporter_Behavior(t *testing.T) {
 			errText: "no match locally or in the Jsonnet library paths",
 		},
 		{
+			name:    "multi_document_yaml",
+			file:    "caller_multi_document.jsonnet",
+			wantErr: ErrMalformedImport,
+			errText: "multi-document YAML is not supported",
+		},
+		{
 			name: "glob_imports",
 			file: "caller_glob_imports.jsonnet",
 			want: `{"fromLibsonnet":true,"yamlA":1,"yamlB":2}`,

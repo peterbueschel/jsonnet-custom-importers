@@ -267,6 +267,8 @@ name: config
 
 A file without imports becomes `std.parseYaml(importstr 'config.yaml')`.
 
+Multi-document YAML files are not supported.
+
 ### Options
 
 - `y.ImportsKey("<key>")` changes the key with the imports. Default: `imports`.
