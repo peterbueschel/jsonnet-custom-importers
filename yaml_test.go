@@ -227,3 +227,41 @@ func TestYamlImporter_ImportGraph(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(dot), "mixed.yaml#yaml")
 }
+
+func TestYamlImporter_IgnoreImportCycles(t *testing.T) {
+	// imports are lazy: the cycle is only found if the wrapper uses base.
+	for _, tt := range []struct {
+		name    string
+		wrapper string
+		ignore  bool
+		wantErr bool
+	}{
+		{name: "cycle_error_by_default", wrapper: "function(base, doc, file) base + doc", wantErr: true},
+		{name: "cycle_ignored", wrapper: "function(base, doc, file) doc", ignore: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			y := NewYamlImporter()
+			y.Wrapper(tt.wrapper)
+			m := NewMultiImporter(y, NewGlobImporter(), NewFallbackFileImporter())
+			m.fs = afero.NewMemMapFs()
+
+			if tt.ignore {
+				m.IgnoreImportCycles()
+			}
+
+			vm := jsonnet.MakeVM()
+			vm.Importer(m)
+
+			got, err := vm.EvaluateFile("testdata/yaml/caller_cycle.jsonnet")
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), ErrImportCycle.Error())
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"a":1,"imports":["b.yaml"]}`, got)
+		})
+	}
+}
