@@ -274,10 +274,11 @@ Use one importer instance per evaluation, or call `Reset()` before re-evaluating
 ### Options
 
 - `y.ImportsKey("<key>")` changes the key with the imports. Default: `imports`.
+- `y.FileRefs("<path>")` lists file names inside the document, e.g. `project.components[].file` (`[]` walks over a list; the value is a string or a list of strings). Each entry is imported relative to the YAML file (`.yaml`/`.yml` via `yaml://`) and the wrapper gets the imports as the 4th parameter `refs`: an object with the key `<file>::<entry>`. A missing file fails with an error that names the YAML file. The wrapper must accept `refs`, with a default, because it runs for every YAML file.
 - `y.Wrapper("<expression>")` sets the jsonnet function with the parameters `base`, `doc` and `file`. `file` is the resolved path relative to the working directory, or the absolute path when given as an absolute import. A set wrapper runs for every YAML file; `base` is `{}` for files without imports. Without a set wrapper, files without imports stay plain `std.parseYaml(...)`. The default wrapper (for files with imports) merges `base` with `doc` and removes the imports key from `doc`:
 
 ```jsonnet
-function(base, doc, file) base + { [k]: doc[k] for k in std.objectFields(doc) if k != 'imports' }
+function(base, doc, file, refs={}) base + { [k]: doc[k] for k in std.objectFields(doc) if k != 'imports' }
 ```
 
 ## Options
