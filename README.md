@@ -240,6 +240,7 @@ Code which will be evaluated in jsonnet:
   m := NewMultiImporter(y, NewGlobImporter(), NewFallbackFileImporter())
 ```
 
+- The import graph contains the `yaml://` files too.
 - With a registered *YamlImporter*, the *GlobImporter* imports matches with `.yaml` or `.yml` via `yaml://`. (`glob-str` still uses `importstr`)
 
 ### Example
@@ -268,7 +269,7 @@ A file without imports becomes `std.parseYaml(importstr 'config.yaml')`.
 ### Options
 
 - `y.ImportsKey("<key>")` changes the key with the imports. Default: `imports`.
-- `y.Wrapper("<expression>")` sets the jsonnet function with the parameters `base`, `doc` and `file`. The default merges `base` with `doc` and removes the imports key from `doc`:
+- `y.Wrapper("<expression>")` sets the jsonnet function with the parameters `base`, `doc` and `file`. A set wrapper runs for every YAML file; `base` is `{}` for files without imports. Without a set wrapper, files without imports stay plain `std.parseYaml(...)`. The default wrapper (for files with imports) merges `base` with `doc` and removes the imports key from `doc`:
 
 ```jsonnet
 function(base, doc, file) base + { [k]: doc[k] for k in std.objectFields(doc) if k != 'imports' }

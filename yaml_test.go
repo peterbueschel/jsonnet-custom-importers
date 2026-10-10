@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/go-jsonnet"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -167,4 +168,62 @@ func TestGlobImporter_handleYaml(t *testing.T) {
 	got, err = g.handle(files, "glob-str+")
 	require.NoError(t, err)
 	assert.Equal(t, "(importstr 'a.libsonnet')+(importstr 'b.yaml')+(importstr 'c.yml')", got)
+}
+
+func TestYamlImporter_WrapperForPlainFile(t *testing.T) {
+	y := NewYamlImporter()
+	y.Wrapper("function(base, doc, file) { base: base, doc: doc, file: file }")
+
+	c, _, err := y.Import("testdata/yaml/x.jsonnet", "yaml://plain.yaml")
+	require.NoError(t, err)
+	assert.Equal(t,
+		"(function(base, doc, file) { base: base, doc: doc, file: file })("+
+			"base = {}, doc = std.parseYaml(importstr 'plain.yaml'), file = 'plain.yaml')",
+		c.String())
+
+	got, err := evalYamlFile(y, "caller_plain.jsonnet")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"base":{},"doc":{"list":[1,2],"name":"plain"},"file":"plain.yaml"}`, got)
+}
+
+func TestYamlImporter_QuotedImportsKey(t *testing.T) {
+	y := NewYamlImporter()
+	y.ImportsKey("it's")
+
+	c, _, err := y.Import("testdata/yaml/x.jsonnet", "yaml://plain.yaml")
+	require.NoError(t, err)
+	assert.Equal(t, "std.parseYaml(importstr 'plain.yaml')", c.String())
+
+	assert.Equal(t, `'it\'s'`, quote(y.key))
+}
+
+func TestYamlImporter_ImportGraph(t *testing.T) {
+	y := NewYamlImporter("testdata/yaml/lib")
+	m := NewMultiImporter(y, NewGlobImporter(), NewFallbackFileImporter())
+	m.fs = afero.NewMemMapFs()
+	m.SetImportGraphFile("graph.gv")
+
+	vm := jsonnet.MakeVM()
+	vm.Importer(m)
+
+	_, err := vm.EvaluateFile("testdata/yaml/caller_mixed.jsonnet")
+	require.NoError(t, err)
+
+	edges, err := m.importGraph.Edges()
+	require.NoError(t, err)
+
+	type edge struct{ from, to string }
+
+	got := map[edge]bool{}
+	for _, e := range edges {
+		got[edge{e.Source, e.Target}] = true
+	}
+
+	assert.True(t, got[edge{"testdata/yaml/caller_mixed.jsonnet", foundAt("testdata/yaml/mixed.yaml")}])
+	assert.True(t, got[edge{foundAt("testdata/yaml/mixed.yaml"), foundAt("testdata/yaml/sub/child.yml")}])
+	assert.True(t, got[edge{foundAt("testdata/yaml/mixed.yaml"), "base.libsonnet"}])
+
+	dot, err := afero.ReadFile(m.fs, "graph.gv")
+	require.NoError(t, err)
+	assert.Contains(t, string(dot), "mixed.yaml#yaml")
 }
