@@ -54,6 +54,11 @@ type (
 		setImportGraph(graph.Graph[string, string], int)
 	}
 
+	// cycleIgnorer is implemented by importers with their own cycle detection.
+	cycleIgnorer interface {
+		setIgnoreImportCycles(bool)
+	}
+
 	// FallbackFileImporter is a wrapper for the original go-jsonnet FileImporter.
 	// The idea is to provide a chain for importers in the MultiImporter, with
 	// the FileImporter as fallback, if nothing else can handle the given
@@ -229,6 +234,9 @@ func (m *MultiImporter) Import(importedFrom, importedPath string) (jsonnet.Conte
 				zap.String("prefix", prefix),
 			)
 			importer.setImportGraph(m.importGraph, m.importCounter)
+			if c, ok := importer.(cycleIgnorer); ok {
+				c.setIgnoreImportCycles(m.ignoreImportCycles)
+			}
 
 			contents, foundAt, err := importer.Import(importedFrom, importedPath)
 			if err != nil {

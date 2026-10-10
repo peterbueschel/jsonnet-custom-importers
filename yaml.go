@@ -55,6 +55,8 @@ type (
 		importCounter int
 		// shared is the import graph of the MultiImporter.
 		shared graph.Graph[string, string]
+		// ignoreCycles follows the option of the MultiImporter.
+		ignoreCycles bool
 	}
 )
 
@@ -93,6 +95,10 @@ func (y *YamlImporter) Wrapper(expression string) {
 func (y *YamlImporter) setImportGraph(importGraph graph.Graph[string, string], importCounter int) {
 	y.shared = importGraph
 	y.importCounter = importCounter
+}
+
+func (y *YamlImporter) setIgnoreImportCycles(ignore bool) {
+	y.ignoreCycles = ignore
 }
 
 // Logger can be used to set the zap.Logger for the YamlImporter.
@@ -238,6 +244,10 @@ func (y *YamlImporter) trackImport(importedFrom, file string) error {
 	_ = y.deps.AddVertex(file)
 
 	if cycle, _ := graph.CreatesCycle(y.deps, from, file); cycle {
+		if y.ignoreCycles {
+			return nil
+		}
+
 		return fmt.Errorf("%w detected with adding %s to %s", ErrImportCycle, from, file)
 	}
 

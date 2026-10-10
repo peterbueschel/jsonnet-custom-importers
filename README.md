@@ -232,7 +232,7 @@ Code which will be evaluated in jsonnet:
   - entries ending with `.yaml` or `.yml` are imported via `yaml://`.
   - all other entries stay normal jsonnet imports.
   - entries are relative to the YAML file or found in the JPaths.
-  - import cycles are detected and return an error.
+  - import cycles are detected and return an error, unless the *MultiImporter* ignores import cycles (see "Ignore Import Cycles"). Without detection, a cycle that is evaluated ends in a go-jsonnet stack error.
 - Add it to the *MultiImporter*:
 
 ``` go
