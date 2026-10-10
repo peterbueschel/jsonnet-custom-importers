@@ -1,0 +1,5 @@
+imports:
+  - base.libsonnet
+  - sub/child.yml
+  - lib.yaml
+name: mixed
