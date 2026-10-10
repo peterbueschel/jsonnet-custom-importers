@@ -2,6 +2,7 @@ package importer
 
 import (
 	"fmt"
+	"io/fs"
 	"net/url"
 	"path"
 	"path/filepath"
@@ -310,9 +311,13 @@ func (g *GlobImporter) resolveFilesFrom(searchPaths []string, cwd, pattern strin
 		pathPattern = filepath.ToSlash(pathPattern)
 		base, file := doublestar.SplitPattern(pathPattern)
 
-		fs, err := afero.NewIOFS(g.fs).Sub(base)
-		if err != nil {
-			return
+		// afero's BasePathFs rejects every path below a "." base, so nested
+		// matches would be lost. Use the unwrapped filesystem for ".".
+		var fs fs.FS = afero.NewIOFS(g.fs)
+		if base != "." {
+			if fs, err = afero.NewIOFS(g.fs).Sub(base); err != nil {
+				return
+			}
 		}
 
 		if matches, err = doublestar.Glob(fs, file, doublestar.WithNoFollow(), doublestar.WithFailOnIOErrors()); err != nil {

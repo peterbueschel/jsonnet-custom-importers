@@ -462,3 +462,25 @@ func TestGlobImporter_Import_optionalDoesNotLeak(t *testing.T) {
 	_, _, err = g.Import("", "glob+://*.libsonnet")
 	assert.ErrorIs(t, err, ErrEmptyResult)
 }
+
+func TestGlobImporter_Import_nestedWithDotBase(t *testing.T) {
+	files := []string{"a.yaml", "kubernetes/k.yaml", "kubernetes/deep/d.yaml", "vendor/lib/yaml_project.libsonnet"}
+
+	for _, jpaths := range [][]string{{"."}, {".", "vendor"}} {
+		for _, from := range []string{"yaml_project.libsonnet", "vendor/lib/yaml_project.libsonnet"} {
+			g := NewGlobImporter(jpaths...)
+			g.Logger(zap.New(nil))
+
+			fs := afero.NewMemMapFs()
+			for _, f := range files {
+				assert.NoError(t, afero.WriteFile(fs, f, []byte("a: 1"), 0o644))
+			}
+			g.fs = fs
+
+			got, _, err := g.Import(from, "glob.path://**/*.yaml?optional=true")
+			assert.NoError(t, err)
+			assert.Contains(t, got.String(), "kubernetes/deep/d.yaml", "jpaths %v, from %s", jpaths, from)
+			assert.Contains(t, got.String(), "kubernetes/k.yaml", "jpaths %v, from %s", jpaths, from)
+		}
+	}
+}
