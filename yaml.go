@@ -41,6 +41,11 @@ type (
 	//
 	// The wrapper is a jsonnet function expression with the parameters base,
 	// doc and file. With FileRefs it also gets the parameter refs.
+	//
+	// With JsonnetEntryWrapper every entry which is not a YAML file is wrapped:
+	//
+	//	base = (<entryWrapper>)((import 'a.libsonnet'), '/project/a.libsonnet')
+	//	     + (import 'yaml://b.yaml'),
 	YamlImporter struct {
 		// JPaths stores extra search paths.
 		JPaths []string
@@ -107,12 +112,30 @@ func (y *YamlImporter) Wrapper(expression string) {
 
 // JsonnetEntryWrapper sets a jsonnet function expression for the entries of
 // `imports` which are not YAML files. Such an entry becomes
-// `(<expression>)((import '<entry>'), '<entry>')` instead of `(import '<entry>')`.
-// The function gets the imported value and the entry as it is imported. It can
-// e.g. mark the value, so that the wrapper of the YAML file knows its place in
-// the list. YAML entries (`yaml://`) are not changed.
+// `(<expression>)((import '<entry>'), '<path>')` instead of `(import '<entry>')`.
+// The function gets the imported value and the resolved path of the entry, as
+// `file` of the wrapper. An entry with a scheme, or one which cannot be found,
+// is passed as it is. The function can e.g. mark the value, so that the
+// wrapper of the YAML file knows its place in the list. YAML entries
+// (`yaml://`) are not changed.
 func (y *YamlImporter) JsonnetEntryWrapper(expression string) {
 	y.entryWrapper = expression
+}
+
+// entryPath returns the resolved path of a jsonnet entry, like `file` for the
+// wrapper of a YAML file. An entry with a scheme or an entry which cannot be
+// found stays as it is: the jsonnet import resolves it or fails.
+func (y *YamlImporter) entryPath(file, entry string) string {
+	if strings.Contains(entry, "://") {
+		return entry
+	}
+
+	found, err := y.find(filepath.Dir(file), entry)
+	if err != nil {
+		return entry
+	}
+
+	return found
 }
 
 // FileRefs sets a path in the YAML documents, where file names are listed, e.g.
@@ -204,7 +227,7 @@ func (y *YamlImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 			target := y.toImport(file, imp)
 			expr := fmt.Sprintf("(import %s)", quote(target))
 			if y.entryWrapper != "" && !strings.HasPrefix(target, yamlScheme) {
-				expr = fmt.Sprintf("(%s)(%s, %s)", y.entryWrapper, expr, quote(target))
+				expr = fmt.Sprintf("(%s)(%s, %s)", y.entryWrapper, expr, quote(y.entryPath(file, target)))
 			}
 
 			exprs = append(exprs, expr)
