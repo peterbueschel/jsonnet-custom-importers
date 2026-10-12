@@ -49,6 +49,8 @@ type (
 		logger  *zap.Logger
 		key     string
 		wrapper string
+		// entryWrapper wraps the jsonnet entries of `imports`.
+		entryWrapper string
 		// refPath locates file names in the document, e.g. project.components[].file.
 		refPath string
 
@@ -101,6 +103,16 @@ func (y *YamlImporter) ImportsKey(key string) {
 // base, doc and file for YAML files with imports.
 func (y *YamlImporter) Wrapper(expression string) {
 	y.wrapper = expression
+}
+
+// JsonnetEntryWrapper sets a jsonnet function expression for the entries of
+// `imports` which are not YAML files. Such an entry becomes
+// `(<expression>)((import '<entry>'), '<entry>')` instead of `(import '<entry>')`.
+// The function gets the imported value and the entry as it is imported. It can
+// e.g. mark the value, so that the wrapper of the YAML file knows its place in
+// the list. YAML entries (`yaml://`) are not changed.
+func (y *YamlImporter) JsonnetEntryWrapper(expression string) {
+	y.entryWrapper = expression
 }
 
 // FileRefs sets a path in the YAML documents, where file names are listed, e.g.
@@ -190,7 +202,12 @@ func (y *YamlImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 
 		for _, imp := range imports {
 			target := y.toImport(file, imp)
-			exprs = append(exprs, fmt.Sprintf("(import %s)", quote(target)))
+			expr := fmt.Sprintf("(import %s)", quote(target))
+			if y.entryWrapper != "" && !strings.HasPrefix(target, yamlScheme) {
+				expr = fmt.Sprintf("(%s)(%s, %s)", y.entryWrapper, expr, quote(target))
+			}
+
+			exprs = append(exprs, expr)
 		}
 
 		if wrapper == "" {
