@@ -370,3 +370,29 @@ func TestYamlImporter_FileRefs(t *testing.T) {
 		assert.JSONEq(t, `"testdata/yaml/refs/app.yaml"`, got)
 	})
 }
+
+func TestYamlImporter_JsonnetEntryWrapper(t *testing.T) {
+	y := NewYamlImporter()
+	y.JsonnetEntryWrapper("function(x, f) { entry: f, value: x }")
+	y.Wrapper("function(base, doc, file, refs={}) base + doc { imports:: [] }")
+
+	c, _, err := y.Import("testdata/yaml/x.jsonnet", "yaml://entrywrap/top.yaml")
+	require.NoError(t, err)
+	assert.Equal(t,
+		"(function(base, doc, file, refs={}) base + doc { imports:: [] })("+
+			"base = (function(x, f) { entry: f, value: x })((import 'model.libsonnet'), 'model.libsonnet')"+
+			" + (import 'yaml://other.yaml'), doc = std.parseYaml(importstr 'top.yaml'), file = 'testdata/yaml/entrywrap/top.yaml')",
+		c.String())
+
+	got, err := evalYamlFile(y, "caller_entrywrap.jsonnet")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"entry":"model.libsonnet","name":"top","other":true,"value":{"model":1}}`, got)
+}
+
+func TestYamlImporter_NoJsonnetEntryWrapper(t *testing.T) {
+	y := NewYamlImporter()
+
+	c, _, err := y.Import("testdata/yaml/x.jsonnet", "yaml://entrywrap/top.yaml")
+	require.NoError(t, err)
+	assert.Contains(t, c.String(), "base = (import 'model.libsonnet') + (import 'yaml://other.yaml')")
+}
