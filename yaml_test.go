@@ -380,13 +380,13 @@ func TestYamlImporter_JsonnetEntryWrapper(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t,
 		"(function(base, doc, file, refs={}) base + doc { imports:: [] })("+
-			"base = (function(x, f) { entry: f, value: x })((import 'model.libsonnet'), 'model.libsonnet')"+
+			"base = (function(x, f) { entry: f, value: x })((import 'model.libsonnet'), 'testdata/yaml/entrywrap/model.libsonnet')"+
 			" + (import 'yaml://other.yaml'), doc = std.parseYaml(importstr 'top.yaml'), file = 'testdata/yaml/entrywrap/top.yaml')",
 		c.String())
 
 	got, err := evalYamlFile(y, "caller_entrywrap.jsonnet")
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"entry":"model.libsonnet","name":"top","other":true,"value":{"model":1}}`, got)
+	assert.JSONEq(t, `{"entry":"testdata/yaml/entrywrap/model.libsonnet","name":"top","other":true,"value":{"model":1}}`, got)
 }
 
 func TestYamlImporter_NoJsonnetEntryWrapper(t *testing.T) {
@@ -395,4 +395,54 @@ func TestYamlImporter_NoJsonnetEntryWrapper(t *testing.T) {
 	c, _, err := y.Import("testdata/yaml/x.jsonnet", "yaml://entrywrap/top.yaml")
 	require.NoError(t, err)
 	assert.Contains(t, c.String(), "base = (import 'model.libsonnet') + (import 'yaml://other.yaml')")
+}
+
+func TestYamlImporter_JsonnetEntryWrapperSubfolderAndNested(t *testing.T) {
+	y := NewYamlImporter()
+	y.JsonnetEntryWrapper("function(x, f) x")
+	y.Wrapper("function(base, doc, file, refs={}) base + doc { imports:: [] }")
+
+	got, err := evalYamlFile(y, "caller_entrywrap_sub.jsonnet")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"nested":true,"sub":true}`, got)
+
+	c, _, err := y.Import("testdata/yaml/x.jsonnet", "yaml://entrywrap/subtop.yaml")
+	require.NoError(t, err)
+	assert.Contains(t, c.String(), "((import 'sub/model.libsonnet'), 'testdata/yaml/entrywrap/sub/model.libsonnet')")
+
+	c, _, err = y.Import("testdata/yaml/x.jsonnet", "yaml://entrywrap/sub/nested.yaml")
+	require.NoError(t, err)
+	assert.Contains(t, c.String(), "((import 'model.libsonnet'), 'testdata/yaml/entrywrap/sub/model.libsonnet')")
+}
+
+func TestYamlImporter_JsonnetEntryWrapperNestedResult(t *testing.T) {
+	y := NewYamlImporter()
+	y.JsonnetEntryWrapper("function(x, f) { path: f, v: x }")
+	y.Wrapper("function(base, doc, file, refs={}) { file: file, base: base }")
+
+	got, err := evalYamlFile(y, "caller_entrywrap_sub.jsonnet")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"file":"testdata/yaml/entrywrap/subtop.yaml","base":{"path":"testdata/yaml/entrywrap/sub/model.libsonnet","v":{"sub":true},"file":"testdata/yaml/entrywrap/sub/nested.yaml","base":{"path":"testdata/yaml/entrywrap/sub/model.libsonnet","v":{"sub":true}}}}`, got)
+}
+
+func TestYamlImporter_JsonnetEntryWrapperScheme(t *testing.T) {
+	y := NewYamlImporter()
+	y.JsonnetEntryWrapper("function(x, f) { path: f, v: x }")
+
+	c, _, err := y.Import("testdata/yaml/x.jsonnet", "yaml://entrywrap/globtop.yaml")
+	require.NoError(t, err)
+	assert.Contains(t, c.String(), "((import 'glob+://globdir/*.libsonnet'), 'glob+://globdir/*.libsonnet')")
+
+	got, err := evalYamlFile(y, "caller_entrywrap_glob.jsonnet")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"path":"glob+://globdir/*.libsonnet","v":{"g1":1}}`, got)
+}
+
+func TestYamlImporter_JsonnetEntryWrapperMissingFile(t *testing.T) {
+	y := NewYamlImporter()
+	y.JsonnetEntryWrapper("function(x, f) x")
+
+	_, err := evalYamlFile(y, "caller_missing_jsonnet.jsonnet")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nothere.libsonnet")
 }

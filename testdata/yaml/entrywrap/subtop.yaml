@@ -1,0 +1,3 @@
+imports:
+  - sub/model.libsonnet
+  - sub/nested.yaml
