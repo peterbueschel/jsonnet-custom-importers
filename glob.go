@@ -56,6 +56,8 @@ type (
 		// excludePattern and optional hold per-import state; updating them makes
 		// a GlobImporter unsafe for concurrent use.
 		excludePattern string
+		// defaultExclude is the pattern of Exclude(); every import starts with it.
+		defaultExclude string
 		optional       bool
 		// yaml is true, if a YamlImporter is registered in the MultiImporter.
 		yaml bool
@@ -164,6 +166,7 @@ func (g GlobImporter) importOf(importKind, file string) string {
 
 func (g *GlobImporter) Exclude(pattern string) {
 	g.excludePattern = pattern
+	g.defaultExclude = pattern
 }
 
 // AddAliasPrefix binds a given alias to a given prefix. This prefix must exist
@@ -426,6 +429,7 @@ func (g *GlobImporter) parse(importedPath string) (string, string, error) {
 				ErrMalformedGlobPattern, importedPath, err)
 	}
 
+	g.excludePattern = g.defaultExclude
 	if excludePattern, exists := query["exclude"]; exists {
 		g.excludePattern = excludePattern[0]
 	}
