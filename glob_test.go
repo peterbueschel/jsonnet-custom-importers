@@ -495,8 +495,9 @@ func TestGlobImporter_Import_nestedWithDotBase(t *testing.T) {
 	}
 }
 
-// A match that has no path relative to the importing file is an error, never an empty import.
-func TestGlobImporter_Import_unrelatedMatch(t *testing.T) {
+// A match below an absolute search path is imported with its absolute path, also for a
+// relative importing file.
+func TestGlobImporter_Import_absoluteSearchPath(t *testing.T) {
 	g := NewGlobImporter("/vendor")
 	g.Logger(zap.New(nil))
 
@@ -505,9 +506,26 @@ func TestGlobImporter_Import_unrelatedMatch(t *testing.T) {
 	assert.NoError(t, afero.WriteFile(fs, "app/b.libsonnet", []byte("{}"), 0o644))
 	g.fs = fs
 
-	_, _, err := g.Import("app/defaults.jsonnet", "glob.stem://**/*.libsonnet")
+	got, _, err := g.Import("app/defaults.jsonnet", "glob.path://**/*.libsonnet")
+	assert.NoError(t, err)
+	assert.Contains(t, got.String(), "(import '/vendor/monaco/a.libsonnet')")
+	assert.Contains(t, got.String(), "(import 'b.libsonnet')")
+	assert.NotContains(t, got.String(), "import ''")
+}
+
+// A match that cannot be made relative to the importing file is an error, never an empty import.
+func TestGlobImporter_Import_unrelatedMatch(t *testing.T) {
+	g := NewGlobImporter("app")
+	g.Logger(zap.New(nil))
+
+	fs := afero.NewMemMapFs()
+	assert.NoError(t, afero.WriteFile(fs, "app/b.libsonnet", []byte("{}"), 0o644))
+	g.fs = fs
+
+	// the base "../other/" is unknown from here: "app/b.libsonnet" has no path relative to it
+	_, _, err := g.Import("../other/defaults.jsonnet", "glob.stem://*.libsonnet")
 	assert.ErrorIs(t, err, ErrUnrelatedMatch)
-	assert.ErrorContains(t, err, "glob.stem://**/*.libsonnet")
-	assert.ErrorContains(t, err, "/vendor/monaco/a.libsonnet")
-	assert.ErrorContains(t, err, "app/")
+	assert.ErrorContains(t, err, "glob.stem://*.libsonnet")
+	assert.ErrorContains(t, err, "app/b.libsonnet")
+	assert.ErrorContains(t, err, "../other/")
 }
