@@ -267,7 +267,13 @@ func (g *GlobImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 	}
 
 	for _, f := range afiles {
-		relf, _ := filepath.Rel(basepath, f)
+		relf, err := filepath.Rel(basepath, f)
+		if err != nil {
+			return contents, foundAt, fmt.Errorf(
+				"%w: the glob '%s' in '%s' matched '%s', which has no path relative to '%s': %w",
+				ErrUnrelatedMatch, importedPath, importedFrom, f, basepath, err)
+		}
+
 		files = append(files, relf)
 
 		if err := g.importGraph.AddVertex(relf,

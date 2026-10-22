@@ -31,6 +31,7 @@ var (
 	ErrMalformedGlobPattern = errors.New("malformed glob pattern")
 	ErrImportCycle          = errors.New("import cycle")
 	ErrEmptyResult          = errors.New("empty result")
+	ErrUnrelatedMatch       = errors.New("glob match outside the importing folder")
 	ErrUnknownConfig        = errors.New("unknown config")
 	ErrMalformedImport      = errors.New("malformed import string")
 	ErrMalformedQuery       = errors.New("malformed query parameter(s)")

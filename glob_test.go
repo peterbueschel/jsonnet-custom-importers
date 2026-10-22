@@ -494,3 +494,20 @@ func TestGlobImporter_Import_nestedWithDotBase(t *testing.T) {
 		}
 	}
 }
+
+// A match that has no path relative to the importing file is an error, never an empty import.
+func TestGlobImporter_Import_unrelatedMatch(t *testing.T) {
+	g := NewGlobImporter("/vendor")
+	g.Logger(zap.New(nil))
+
+	fs := afero.NewMemMapFs()
+	assert.NoError(t, afero.WriteFile(fs, "/vendor/monaco/a.libsonnet", []byte("{}"), 0o644))
+	assert.NoError(t, afero.WriteFile(fs, "app/b.libsonnet", []byte("{}"), 0o644))
+	g.fs = fs
+
+	_, _, err := g.Import("app/defaults.jsonnet", "glob.stem://**/*.libsonnet")
+	assert.ErrorIs(t, err, ErrUnrelatedMatch)
+	assert.ErrorContains(t, err, "glob.stem://**/*.libsonnet")
+	assert.ErrorContains(t, err, "/vendor/monaco/a.libsonnet")
+	assert.ErrorContains(t, err, "app/")
+}
