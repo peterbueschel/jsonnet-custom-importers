@@ -267,11 +267,18 @@ func (g *GlobImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 	}
 
 	for _, f := range afiles {
-		relf, err := filepath.Rel(basepath, f)
-		if err != nil {
-			return contents, foundAt, fmt.Errorf(
-				"%w: the glob '%s' in '%s' matched '%s', which has no path relative to '%s': %w",
-				ErrUnrelatedMatch, importedPath, importedFrom, f, basepath, err)
+		// A match below an absolute search path has no path relative to a relative
+		// importing file; it is imported with its absolute path.
+		relf := f
+		if !filepath.IsAbs(f) {
+			var err error
+
+			relf, err = filepath.Rel(basepath, f)
+			if err != nil {
+				return contents, foundAt, fmt.Errorf(
+					"%w: the glob '%s' in '%s' matched '%s', which has no path relative to '%s': %w",
+					ErrUnrelatedMatch, importedPath, importedFrom, f, basepath, err)
+			}
 		}
 
 		files = append(files, relf)
