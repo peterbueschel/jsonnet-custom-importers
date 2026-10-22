@@ -529,3 +529,27 @@ func TestGlobImporter_Import_unrelatedMatch(t *testing.T) {
 	assert.ErrorContains(t, err, "app/b.libsonnet")
 	assert.ErrorContains(t, err, "../other/")
 }
+
+// An exclude of one import does not leak into the next one; the pattern of Exclude() stays.
+func TestGlobImporter_Import_excludeDoesNotLeak(t *testing.T) {
+	g := NewGlobImporter()
+	g.Logger(zap.New(nil))
+	g.Exclude("**/skip.libsonnet")
+
+	fs := afero.NewMemMapFs()
+	for _, f := range []string{"app/a.libsonnet", "app/b.libsonnet", "app/skip.libsonnet"} {
+		assert.NoError(t, afero.WriteFile(fs, f, []byte("{}"), 0o644))
+	}
+	g.fs = fs
+
+	got, _, err := g.Import("app/defaults.jsonnet", "glob.stem://**/*.libsonnet?exclude=**/a.libsonnet")
+	assert.NoError(t, err)
+	assert.NotContains(t, got.String(), "a.libsonnet")
+	assert.Contains(t, got.String(), "skip.libsonnet")
+
+	got, _, err = g.Import("app/defaults.jsonnet", "glob.stem://**/*.libsonnet")
+	assert.NoError(t, err)
+	assert.Contains(t, got.String(), "a.libsonnet")
+	assert.Contains(t, got.String(), "b.libsonnet")
+	assert.NotContains(t, got.String(), "skip.libsonnet")
+}
