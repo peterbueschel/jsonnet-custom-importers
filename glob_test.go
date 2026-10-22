@@ -513,6 +513,22 @@ func TestGlobImporter_Import_absoluteSearchPath(t *testing.T) {
 	assert.NotContains(t, got.String(), "import ''")
 }
 
+// For an absolute importing file a match in its own folder stays relative.
+func TestGlobImporter_Import_absoluteImportingFile(t *testing.T) {
+	g := NewGlobImporter("/vendor")
+	g.Logger(zap.New(nil))
+
+	fs := afero.NewMemMapFs()
+	assert.NoError(t, afero.WriteFile(fs, "/vendor/monaco/a.libsonnet", []byte("{}"), 0o644))
+	assert.NoError(t, afero.WriteFile(fs, "/work/app/b.libsonnet", []byte("{}"), 0o644))
+	g.fs = fs
+
+	got, _, err := g.Import("/work/app/defaults.jsonnet", "glob.path://**/*.libsonnet")
+	assert.NoError(t, err)
+	assert.Contains(t, got.String(), "(import 'b.libsonnet')")
+	assert.NotContains(t, got.String(), "/work/app/b.libsonnet")
+}
+
 // A match that cannot be made relative to the importing file is an error, never an empty import.
 func TestGlobImporter_Import_unrelatedMatch(t *testing.T) {
 	g := NewGlobImporter("app")

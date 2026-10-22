@@ -96,7 +96,7 @@ same as before but in addition with the `<query-parameter>` `exclude=**/*ignore.
 	- **Imports multiple files at once** via [glob patterns](https://en.wikipedia.org/wiki/Glob_(programming)) handled by the [doublestar](https://github.com/bmatcuk/doublestar) library.
 	- Supports **Continuous** imports: If inside the resolved files other glob-patterns will be found, the *GlobImporter* will also take these *glob-imports* and resolves the underlying files.
 	- Can be **optional**: use `optional=true` as query parameter to get an empty object `{}` instead of an error, if nothing matches (or `exclude` removes everything).
-	- Can **Exclude** imports: use `exclude=<glob pattern>` as query parameter to exclude files from further handlings.
+	- Can **Exclude** imports: use `exclude=<glob pattern>` as query parameter to exclude files from further handlings. The `exclude` of an import replaces the pattern given to `Exclude()` for that import only.
     - Supports extra **JPaths**: extra search paths for additional libraries. (⚠️ matches of library paths have a lower priority then matches in the current work dir)
     - **Sorts** the resolved files: in lexicographical and hierarchical order. Example: `[a0 b02 a0/b/c a1 d/x c b2 a1/b b10]` becomes `[a0 a0/b/c a1 a1/b b02 b10 b2 c d/x]` 
 - Activate the _glob-import_ via the prefix `glob.<?>` or `glob.<?>+` to get the content of the resolved files as object. The content of each file will be available under its resolved **path**, **file**name, **stem** (filename with file extension) or **dir**name. (see also table in section "Prefix `glob.<?>` And `glob.<?>+`")

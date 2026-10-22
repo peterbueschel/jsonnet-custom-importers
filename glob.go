@@ -270,10 +270,10 @@ func (g *GlobImporter) Import(importedFrom, importedPath string) (jsonnet.Conten
 	}
 
 	for _, f := range afiles {
-		// A match below an absolute search path has no path relative to a relative
-		// importing file; it is imported with its absolute path.
+		// Only an absolute match with a relative importing file cannot be made relative;
+		// it is imported with its absolute path. Every other match stays relative.
 		relf := f
-		if !filepath.IsAbs(f) {
+		if !filepath.IsAbs(f) || filepath.IsAbs(basepath) {
 			var err error
 
 			relf, err = filepath.Rel(basepath, f)
